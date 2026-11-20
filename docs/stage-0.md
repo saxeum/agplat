@@ -27,7 +27,7 @@ src/agplat/agents/registry.py    load specs once; digest each file
 tests/                           HTTP and registry tests, TestModel only
 ```
 
-`src/` is 317 lines including docstrings; `tests/` is 120.
+`src/` is 318 lines including docstrings; `tests/` is 120.
 
 ## Decisions
 
@@ -84,10 +84,16 @@ make lint
 `All checks passed!`
 
 ```
+make typecheck
+```
+
+`0 errors, 0 warnings, 0 notes` (basedpyright, `standard` mode, matching Zed's default).
+
+```
 find src -name '*.py' -print0 | xargs -0 cat | wc -l
 ```
 
-`317`
+`318`
 
 Key references: [Agent Specs](https://pydantic.dev/docs/ai/core-concepts/agent-spec/),
 [Agents](https://pydantic.dev/docs/ai/core-concepts/agent/), [Testing](https://pydantic.dev/docs/ai/guides/testing/),

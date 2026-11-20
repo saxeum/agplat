@@ -22,8 +22,14 @@ test: ## Unit and HTTP tests: no model, no network, no database
 lint: ## Lint
 	uv run ruff check src tests
 
-fmt: ## Format
+typecheck: ## Type check (basedpyright, Zed's standard mode)
+	uv run basedpyright
+
+fmt: ## Format and sort imports (matches Zed's format-on-save)
+	uv run ruff check --select I --fix src tests
 	uv run ruff format src tests
+
+check: lint typecheck test ## Run everything CI runs
 
 smoke: ## Hit a running API
 	@curl -fsS http://127.0.0.1:8000/health && echo

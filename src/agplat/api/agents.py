@@ -27,9 +27,10 @@ def _settings(request: Request) -> Settings:
 
 def _info(loaded: LoadedAgent, name: str) -> AgentInfo:
     spec = loaded.spec
+    assert spec.model is not None  # AgentRegistry.load() rejects a spec without one
     return AgentInfo(
         name=name,
-        description=spec.description or "",
+        description=str(spec.description or ""),
         model=spec.model,
         digest=loaded.digest,
     )

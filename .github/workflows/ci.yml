@@ -34,5 +34,8 @@ jobs:
       - name: Lint
         run: uv run ruff check --output-format=github src tests
 
+      - name: Typecheck
+        run: uv run basedpyright
+
       - name: Test
         run: uv run pytest -q
