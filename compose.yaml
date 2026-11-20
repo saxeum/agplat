@@ -1,4 +1,4 @@
-# Step 1: the API and Postgres/pgvector. Only loopback is published: this
+# Step 1: the API and Postgres. Only loopback is published: this
 # service has no auth by design.
 name: agplat
 
@@ -36,7 +36,7 @@ services:
       retries: 3
 
   db:
-    image: pgvector/pgvector:pg17
+    image: postgres:17
     environment:
       POSTGRES_USER: agplat
       POSTGRES_PASSWORD: agplat

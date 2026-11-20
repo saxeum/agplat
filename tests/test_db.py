@@ -42,8 +42,8 @@ def write_migrations(directory: Path, names: list[str]) -> None:
 
 
 def test_apply_skips_recorded_and_records_new(tmp_path: Path) -> None:
-    write_migrations(tmp_path, ["0001_baseline.sql", "0002_next.sql"])
-    connection = FakeConnection(applied={"0001_baseline.sql"})
+    write_migrations(tmp_path, ["0001_runs.sql", "0002_next.sql"])
+    connection = FakeConnection(applied={"0001_runs.sql"})
 
     applied = asyncio.run(db._apply(connection, tmp_path))
 
@@ -53,7 +53,7 @@ def test_apply_skips_recorded_and_records_new(tmp_path: Path) -> None:
 
 
 def test_migrate_connects_and_closes(monkeypatch, tmp_path: Path) -> None:
-    write_migrations(tmp_path, ["0001_baseline.sql"])
+    write_migrations(tmp_path, ["0001_runs.sql"])
     connection = FakeConnection()
     seen: dict[str, str] = {}
 
@@ -65,6 +65,6 @@ def test_migrate_connects_and_closes(monkeypatch, tmp_path: Path) -> None:
 
     applied = asyncio.run(db.migrate("postgresql://example", tmp_path))
 
-    assert applied == ["0001_baseline.sql"]
+    assert applied == ["0001_runs.sql"]
     assert seen["dsn"] == "postgresql://example"
     assert connection.closed

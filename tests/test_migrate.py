@@ -8,7 +8,7 @@ from agplat import migrate as migrate_module
 def test_main_reports_applied(monkeypatch, capsys) -> None:
     async def fake_migrate(dsn: str) -> list[str]:
         assert dsn == "postgresql://example"
-        return ["0001_baseline.sql"]
+        return ["0001_runs.sql"]
 
     monkeypatch.setattr(migrate_module, "migrate", fake_migrate)
     monkeypatch.setattr(
@@ -19,7 +19,7 @@ def test_main_reports_applied(monkeypatch, capsys) -> None:
 
     migrate_module.main()
 
-    assert "applied: 0001_baseline.sql" in capsys.readouterr().out
+    assert "applied: 0001_runs.sql" in capsys.readouterr().out
 
 
 def test_main_reports_up_to_date(monkeypatch, capsys) -> None:
