@@ -10,6 +10,7 @@ from pydantic_ai.models.test import TestModel
 
 from agplat.agents.registry import AgentRegistry
 from agplat.main import create_app
+from tests.fakes import FakeRunStore
 
 AGENTS_DIR = Path(__file__).parent.parent / "agents"
 
@@ -23,7 +24,12 @@ def db_url() -> str:
 
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
+def runs() -> FakeRunStore:
+    return FakeRunStore()
+
+
+@pytest.fixture
+def client(runs: FakeRunStore) -> Iterator[TestClient]:
     registry = AgentRegistry.load(AGENTS_DIR, model=TestModel())
-    with TestClient(create_app(registry=registry)) as test_client:
+    with TestClient(create_app(registry=registry, runs=runs)) as test_client:
         yield test_client

@@ -2,14 +2,22 @@
 
 import asyncio
 from decimal import Decimal
+from pathlib import Path
 from uuid import uuid4
 
 import asyncpg
 import pytest
+from fastapi.testclient import TestClient
+from pydantic_ai.models.test import TestModel
 
-from agplat.runs import RunRepository
+from agplat.agents.registry import AgentRegistry
+from agplat.main import create_app
+from agplat.runs import Run, RunRepository
+from agplat.settings import Settings
 
 pytestmark = pytest.mark.integration
+
+AGENTS_DIR = Path(__file__).parent.parent / "agents"
 
 
 def test_database_and_migrations_are_reachable(db_url: str) -> None:
@@ -88,3 +96,30 @@ def test_run_repository_round_trips(db_url: str) -> None:
         assert [child.id for child in children] == [child_id]
 
     asyncio.run(scenario())
+
+
+def test_route_persists_a_run(db_url: str) -> None:
+    registry = AgentRegistry.load(AGENTS_DIR, model=TestModel())
+    app = create_app(
+        settings=Settings(db_url=db_url, agents_dir=AGENTS_DIR),
+        registry=registry,
+        runs=RunRepository(db_url),
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/agents/assistant/runs", json={"input": "hi"})
+
+    assert response.status_code == 200
+    body = response.json()
+    run_id = body["run_id"]
+
+    async def read() -> Run | None:
+        return await RunRepository(db_url).get(run_id)
+
+    run = asyncio.run(read())
+    assert run is not None
+    assert run.status == "ok"
+    assert run.agent == "assistant"
+    assert run.output == body["output"]
+    assert run.manifest_digest == registry.get("assistant").digest
+    assert run.requests == body["usage"]["requests"]

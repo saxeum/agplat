@@ -438,8 +438,8 @@ HTTP is a configuration variant, not a redesign.
 
 ## 11. REST API
 
-All bodies are JSON except the upload. Errors are `{"detail": str}` today; Step 1 adds `code` and
-`run_id` to the same shape.
+All bodies are JSON except the upload. Errors are `{"detail": str, "code": str, "run_id": str | null}`;
+`run_id` is null when the error happened before a run existed.
 
 | Method | Path | Body / params | Returns |
 | --- | --- | --- | --- |

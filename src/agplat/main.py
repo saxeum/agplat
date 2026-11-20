@@ -7,6 +7,8 @@ from fastapi import FastAPI
 
 from agplat import api
 from agplat.agents.registry import AgentRegistry
+from agplat.api.errors import ApiError, api_error_handler
+from agplat.runs import RunRepository, RunStore
 from agplat.settings import Settings, get_settings
 
 
@@ -14,6 +16,7 @@ def create_app(
     *,
     settings: Settings | None = None,
     registry: AgentRegistry | None = None,
+    runs: RunStore | None = None,
 ) -> FastAPI:
     """Build an app.
 
@@ -27,10 +30,13 @@ def create_app(
     load_dotenv(Path.home() / ".env")
 
     registry = registry or AgentRegistry.load(settings.agents_dir)
+    runs = runs or RunRepository(settings.db_url)
 
     app = FastAPI(title="agplat", version="0.0.0")
+    app.add_exception_handler(ApiError, api_error_handler)
     app.state.settings = settings
     app.state.registry = registry
+    app.state.runs = runs
     app.include_router(api.health.router)
     app.include_router(api.agents.router)
     return app

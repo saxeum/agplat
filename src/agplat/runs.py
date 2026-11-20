@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Protocol
 
 import asyncpg
 
@@ -33,6 +33,34 @@ class Run:
     cost: Decimal | None
     latency_ms: int | None
     created_at: datetime
+
+
+class RunStore(Protocol):
+    """What the run endpoint needs. Tests provide a fake of this."""
+
+    async def create_running(
+        self,
+        run_id: str,
+        *,
+        agent: str,
+        manifest_digest: str,
+        input: str,
+        parent_id: str | None = None,
+    ) -> None: ...
+
+    async def finish_ok(
+        self,
+        run_id: str,
+        *,
+        output: str,
+        input_tokens: int,
+        output_tokens: int,
+        requests: int,
+        cost: Decimal | None,
+        latency_ms: int,
+    ) -> None: ...
+
+    async def finish_failed(self, run_id: str, *, error: str, latency_ms: int) -> None: ...
 
 
 class RunRepository:
