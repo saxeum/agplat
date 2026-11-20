@@ -25,7 +25,7 @@ inject a `TestModel` registry.
 
 ## The shape, in files
 
-`src/` is 323 lines including docstrings; `tests/` is 111. The interesting part is not the size, it
+`src/` is 323 lines including docstrings; `tests/` is 112. The interesting part is not the size, it
 is that each file has exactly one job.
 
 ```
