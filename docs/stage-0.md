@@ -12,7 +12,7 @@ exposes discovery plus one run endpoint. No database, tools, streaming, auth or 
 | GET | `/agents/{name}` | one agent, with its SHA-256 digest |
 | POST | `/agents/{name}/runs` | `{"input": "..."}` → `{run_id, output, usage}` |
 
-The run endpoint needs a model. `agents/assistant.yaml` names `ollama:qwen3`; tests inject a
+The run endpoint needs a model. `agents/assistant.yaml` names `deepseek:deepseek-flash`; tests inject a
 `TestModel` registry and never touch it.
 
 ## Files
@@ -45,7 +45,7 @@ tests/                           HTTP and registry tests, TestModel only
   cannot be built, duplicate names, and an empty agents directory all fail before serving.
 - **Dependencies carry identity, not secrets.** `RunDeps(run_id, agent, depth)` is frozen and never
   shown to the model. The platform creates `run_id`; delegation will create `depth + 1`.
-- **Model is a spec field.** `agents/assistant.yaml` names `ollama:qwen3`; a spec without `model`
+- **Model is a spec field.** `agents/assistant.yaml` names `deepseek:deepseek-flash`; a spec without `model`
   fails startup. Provider credentials stay in Pydantic AI's own environment variables.
 - **Tests replace the model.** `create_app(settings=..., registry=...)` injects a `TestModel`
   registry; the HTTP layer, spec loading, agent construction and usage accounting all run.

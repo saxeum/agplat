@@ -24,9 +24,9 @@ curl -s -X POST http://127.0.0.1:8000/agents/assistant/runs \
   -d '{"input": "hello"}'
 ```
 
-The last call needs a model. `agents/assistant.yaml` names a local Ollama model
-(`ollama:qwen3`); run Ollama on the host, or edit that `model:` field to any
-Pydantic AI model string.
+The last call needs a model. `agents/assistant.yaml` names `deepseek:deepseek-flash`;
+put `DEEPSEEK_API_KEY` in `~/.env` (loaded at startup), or edit that `model:`
+field to any Pydantic AI model string.
 
 On the host (faster while reading code):
 

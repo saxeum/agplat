@@ -1,5 +1,5 @@
 name: assistant
-model: ollama:qwen3
+model: deepseek:deepseek-flash
 description: General local assistant. No tools yet.
 instructions: |
   You are agplat's assistant, a local agent running on the user's machine.

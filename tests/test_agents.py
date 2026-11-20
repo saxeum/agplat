@@ -19,7 +19,7 @@ def test_agent_detail_exposes_the_digest(client: TestClient) -> None:
     body = client.get("/agents/assistant").json()
 
     assert set(body) == {"name", "description", "model", "digest"}
-    assert body["model"] == "ollama:qwen3"
+    assert body["model"] == "deepseek:deepseek-flash"
     assert body["digest"]
     assert body["description"]
 

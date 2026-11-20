@@ -1,7 +1,8 @@
 """Composition root: settings in, routes out. Nothing else lives here."""
 
-import os
+from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 
 from agplat import api
@@ -21,10 +22,9 @@ def create_app(
     """
     settings = settings or get_settings()
 
-    # Pydantic AI reads the Ollama endpoint from OLLAMA_BASE_URL. The platform
-    # supplies a local default so `ollama:` model strings work on the host
-    # without extra exports; compose overrides it for host.docker.internal.
-    os.environ.setdefault("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+    # Provider keys live in ~/.env, outside the repo. Existing process
+    # environment variables win, so containers can inject them directly.
+    load_dotenv(Path.home() / ".env")
 
     registry = registry or AgentRegistry.load(settings.agents_dir)
 
