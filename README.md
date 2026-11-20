@@ -4,6 +4,8 @@ A local, REST-only, multi-agent knowledge platform. FastAPI in front, Pydantic A
 behind it, Postgres with pgvector underneath, Docker around it all.
 
 **Design: [DESIGN.md](DESIGN.md).** Start there; this file is the quickstart.
+**Stage 0 notes: [docs/stage-0.md](docs/stage-0.md).** What exists now, and the
+Pydantic AI docs behind each decision.
 
 Current status: **Step 0** — one agent, two read endpoints, one run endpoint.
 No database and no tools yet. See [DESIGN.md §16](DESIGN.md#16-build-order) for
@@ -57,8 +59,8 @@ src/agplat/agents/        manifest schema, compiler, registry
 tests/                    HTTP and manifest tests, TestModel only
 ```
 
-Read them in that order. The whole of Step 0 is under 200 lines; the compiler
-(`agents/loader.py`) is the part worth rereading.
+Read them in that order. Step 0 is about 460 lines of `src/`, docstrings
+included; the compiler (`agents/loader.py`) is the part worth rereading.
 
 ## The rule this repo is built around
 

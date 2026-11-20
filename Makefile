@@ -5,7 +5,7 @@ help: ## Show this help
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-8s\033[0m %s\n", $$1, $$2}'
 
 up: ## Build and start the API in Docker (127.0.0.1:8000)
-	docker compose up --build
+	docker compose up --build -d
 
 down: ## Stop the container
 	docker compose down
