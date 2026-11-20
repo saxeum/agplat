@@ -1,7 +1,7 @@
 # agplat
 
 A local, REST-only, multi-agent knowledge platform. FastAPI in front, Pydantic AI
-behind it, Postgres with pgvector underneath, Docker around it all.
+behind it, Postgres underneath, Docker around it all.
 
 **Design: [DESIGN.md](DESIGN.md).** Start there; this file is the quickstart.
 **Stage 0 notes: [docs/stage-0.md](docs/stage-0.md).** What exists now, and the

@@ -52,7 +52,7 @@ policy and the HTTP contract**.
 ┌──────────── docker compose ─────────────────────────────┐
 │                                                         │
 │  api   FastAPI + agents       127.0.0.1:8000            │
-│  db    Postgres 17 + pgvector 127.0.0.1:5432            │
+│  db    Postgres 17          127.0.0.1:5432              │
 │                                                         │
 │  volumes: ./data (uploads, derived files)               │
 └─────────────────────────────────────────────────────────┘
@@ -80,6 +80,8 @@ src/agplat/
   main.py            create_app(): the composition root, nothing else
   settings.py        env-driven settings (AGPLAT_*)
   deps.py            RunDeps: what a tool may see about the current run
+  db.py              Postgres connection and forward-only migrations
+  migrate.py         python -m agplat.migrate
   api/
     health.py        GET /health
     agents.py        GET /agents, POST /agents/{name}/runs
@@ -87,6 +89,7 @@ src/agplat/
   agents/
     registry.py      load native AgentSpecs once; digest each manifest
 agents/              one YAML per agent (data, not code)
+migrations/          committed SQL, applied once each by agplat.migrate
 tests/               unit + HTTP tests, no model and no database
 ```
 
@@ -97,8 +100,8 @@ As steps land, this grows by one module at a time:
 
 | Step | New module |
 | --- | --- |
-| 1 | `runs.py` (run records), SSE in `api/agents.py` |
-| 2 | `db.py`, `tools/sql.py` |
+| 1 | `db.py`, `migrate.py`, `runs.py` (run records), SSE in `api/agents.py` |
+| 2 | `tools/sql.py` |
 | 3 | `knowledge/ingest.py`, `api/documents.py` |
 | 4 | `knowledge/embed.py`, `knowledge/search.py` |
 | 5 | `tools/docs.py`, `evals/` |
@@ -360,6 +363,11 @@ error on the first insert.
 
 ## 9. Database access for agents
 
+**Migrations are committed SQL.** Files under `migrations/` are applied in filename order by
+`uv run python -m agplat.migrate` (`make db-migrate`). The runner records each applied filename in
+`schema_migrations` and wraps the file plus its record in one transaction. No Alembic: the schema is
+small and the runner is small enough to read. The first migration arrives with the `runs` table.
+
 The requirement "DB access" means **the agent can query data**, not "the agent can run SQL against
 the platform's own tables". Those are separated:
 
@@ -463,7 +471,7 @@ Every knob is an `AGPLAT_*` environment variable; defaults work locally.
 | Variable | Default | Used by |
 | --- | --- | --- |
 | `AGPLAT_AGENTS_DIR` | `agents` | registry |
-| `AGPLAT_DB_URL` | `postgresql://agplat:agplat@db:5432/agplat` | storage |
+| `AGPLAT_DB_URL` | `postgresql://agplat:agplat@127.0.0.1:5432/agplat` | storage; compose sets `@db` |
 | `AGPLAT_DB_RO_URL` | `postgresql://agplat_ro:...` | `sql_query` |
 | `AGPLAT_DATA_DIR` | `/data` | uploads |
 | `AGPLAT_MAX_UPLOAD_BYTES` | `26214400` (25 MiB) | upload |
@@ -547,7 +555,7 @@ services:
     command: uvicorn agplat.main:create_app --factory --host 0.0.0.0 --port 8000 --reload
 ```
 
-Step 1 adds `db` (`pgvector/pgvector:pg17`) with a healthcheck and `depends_on: condition:
+Step 1 adds `db` (`postgres:17`) with a healthcheck and `depends_on: condition:
 service_healthy`. Step 8 adds `--profile mcp`. The image is
 non-root, installs with `uv sync --frozen`, and has no build toolchain at runtime.
 
@@ -565,7 +573,7 @@ until the previous one's exit test passes.
 | Step | Deliverable | Read first | Exit test |
 | --- | --- | --- | --- |
 | **0 ✅** | skeleton, native `AgentSpec` loader, `GET /agents`, `POST /agents/{name}/runs`, tests | Pydantic AI *Agents* (`Agent`, `run`), *Agent Specs* (`AgentSpec`), *Testing* (`TestModel`) | `make test` passes; a run returns text with a model configured |
-| 1 | Postgres + migrations, run rows, streaming SSE, usage limits, `GET /runs/{id}` | *Agents* streaming (`run_stream_events`), *Usage limits*, pgvector image | a stream yields deltas; `GET /runs/{id}` returns the row and its usage |
+| 1 | Postgres + migrations, run rows, streaming SSE, usage limits, `GET /runs/{id}` | *Agents* streaming (`run_stream_events`), *Usage limits*, Postgres image | a stream yields deltas; `GET /runs/{id}` returns the row and its usage |
 | 2 | read-only role, `sql_query`, allowlisted views | *Tools*, asyncpg docs | a natural-language question returns rows; `drop table` is refused |
 | 3 | `POST /documents`, extraction, chunking, jobs, list/delete | Pydantic AI *Tools* (for later), PyMuPDF docs | upload a text PDF; `ready`; chunks count > 0; re-upload returns same id |
 | 4 | embeddings, pgvector, hybrid `/search` | *Embeddings*, pgvector README | a paraphrase query finds the right chunk; a keyword query finds an exact code |
