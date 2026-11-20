@@ -61,11 +61,9 @@ auth/queue/UI/cloud. `DESIGN.md` §16 has the order; §17 has the triggers.
 
 ## Known gaps
 
-1. The bare Docker image cannot start: there is no module-level `app`, and the image does not
-   `COPY agents/`.
-2. `RunDeps.depth` has no cap; nothing creates a child run yet.
-3. `run_id` is returned but not stored.
-4. `request_limit=4` is a constant, not an `AGPLAT_*` setting.
+1. `RunDeps.depth` has no cap; nothing creates a child run yet.
+2. `run_id` is returned but not stored.
+3. `request_limit=4` is a constant, not an `AGPLAT_*` setting.
 
 ## Checking the claims
 
@@ -100,3 +98,5 @@ Key references: [Agent Specs](https://pydantic.dev/docs/ai/core-concepts/agent-s
 [Usage limits](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits),
 [Multi-agent Applications](https://pydantic.dev/docs/ai/guides/multi-agent-applications/),
 [MCP](https://pydantic.dev/docs/ai/mcp/server/). Checked 2026-11-21.
+
+Testing policy: [testing.md](testing.md) — host for code, Docker for the boundary.
