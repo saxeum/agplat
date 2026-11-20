@@ -31,6 +31,14 @@ def test_name_falls_back_to_the_filename(tmp_path: Path) -> None:
     assert loaded.agent.name == "a"
 
 
+def test_spec_model_is_used_without_an_override(tmp_path: Path) -> None:
+    write(tmp_path, "a", "model: test\ninstructions: hi\n")
+
+    loaded = AgentRegistry.load(tmp_path).get("a")
+
+    assert isinstance(loaded.agent.model, TestModel)
+
+
 def test_invalid_spec_fails_startup(tmp_path: Path) -> None:
     write(tmp_path, "a", "model: test\ninstructions: 42\n")
 
