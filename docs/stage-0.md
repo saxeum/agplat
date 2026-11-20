@@ -1,6 +1,6 @@
 # Stage 0 — one agent behind four endpoints
 
-Status: **implemented** · 2026-11-21 · commit `9a7cb70` · Pydantic AI `2.71.0`
+Status: **implemented** · 2026-11-21 · commit `d5d1314` · Pydantic AI `2.71.0`
 
 **TL;DR:** FastAPI loads native Pydantic AI `AgentSpec` YAML once at startup, builds one agent, and
 exposes discovery plus one run endpoint. No database, tools, streaming, auth or retrieval yet.
