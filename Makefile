@@ -19,6 +19,9 @@ api: ## Run the API on the host with reload (faster than rebuilding)
 test: ## Unit and HTTP tests: no model, no network, no database
 	uv run pytest -q
 
+test-all: ## Run all tests with coverage (fails under the configured floor)
+	uv run pytest --cov=agplat --cov-report=term-missing
+
 lint: ## Lint
 	uv run ruff check src tests
 

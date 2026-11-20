@@ -19,6 +19,7 @@ dev = [
     "basedpyright==1.40.2",
     "httpx>=0.27,<1",
     "pytest>=8.0,<9",
+    "pytest-cov>=7.1.0",
     "ruff==0.17.6",
 ]
 
@@ -43,3 +44,11 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 # Zed's basedpyright default; basedpyright on its own defaults to "recommended".
 typeCheckingMode = "standard"
 include = ["src", "tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["agplat"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 95

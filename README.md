@@ -34,6 +34,7 @@ On the host (faster while reading code):
 uv sync
 make api        # :8000 with reload
 make test       # no model, no network, no database
+make test-all   # tests + coverage (fails under 95%)
 make typecheck  # basedpyright, standard mode
 make check      # lint + typecheck + test
 ```

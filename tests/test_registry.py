@@ -59,3 +59,8 @@ def test_duplicate_names_are_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="duplicate agent name"):
         AgentRegistry.load(tmp_path, model=TestModel())
+
+
+def test_empty_directory_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="no .* manifests found"):
+        AgentRegistry.load(tmp_path, model=TestModel())

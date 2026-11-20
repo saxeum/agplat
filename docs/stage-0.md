@@ -27,7 +27,7 @@ src/agplat/agents/registry.py    load specs once; digest each file
 tests/                           HTTP and registry tests, TestModel only
 ```
 
-`src/` is 318 lines including docstrings; `tests/` is 128.
+`src/` is 318 lines including docstrings; `tests/` is 156.
 
 ## Decisions
 
@@ -75,7 +75,7 @@ From the repository root:
 make test
 ```
 
-`12 passed` (Python 3.12, `TestModel`, no network).
+`14 passed` (Python 3.12, `TestModel`, no network).
 
 ```
 make lint
