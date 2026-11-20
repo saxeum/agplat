@@ -31,6 +31,9 @@ fmt: ## Format and sort imports (matches Zed's format-on-save)
 
 check: lint typecheck test ## Run everything CI runs
 
-smoke: ## Hit a running API
+smoke: ## Hit a running API: health, agents, one live run
 	@curl -fsS http://127.0.0.1:8000/health && echo
 	@curl -fsS http://127.0.0.1:8000/agents && echo
+	@curl -fsS -X POST http://127.0.0.1:8000/agents/assistant/runs \
+		-H 'content-type: application/json' \
+		-d '{"input": "Reply with the single word: ready"}' && echo
