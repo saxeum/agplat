@@ -82,6 +82,7 @@ src/agplat/
   deps.py            RunDeps: what a tool may see about the current run
   db.py              Postgres connection and forward-only migrations
   migrate.py         python -m agplat.migrate
+  runs.py            run records: insert, finish, read
   api/
     health.py        GET /health
     agents.py        GET /agents, POST /agents/{name}/runs
@@ -518,9 +519,12 @@ Each is a real production concern and none is needed for a laptop PoC. §17 has 
 ## 14. Observability and evaluation
 
 **Run rows, not log archaeology.** Every run writes: `id`, `parent_id`, `agent`, `manifest_digest`,
-`input`, `output`, `status`, `error`, `input_tokens`, `output_tokens`, `cost`, `latency_ms`,
-`created_at`. `GET /runs/{id}` returns the row plus children. This is enough to answer "what
-happened" without an observability stack.
+`input`, `output`, `status`, `error`, `input_tokens`, `output_tokens`, `requests`, `cost`,
+`latency_ms`, `created_at`. `GET /runs/{id}` returns the row plus children. This is enough to answer
+"what happened" without an observability stack.
+
+`cost` is `numeric` and is handled as `Decimal`, so it round-trips exactly; the API serialises it as a
+string because JSON has no `Decimal`.
 
 **Logs** are JSON lines with `run_id` and `job_id`, to stdout. Docker collects them.
 
