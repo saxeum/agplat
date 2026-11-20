@@ -21,9 +21,12 @@ COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen
 
+# The image must carry its own agents; compose mounts them only in dev.
+COPY agents ./agents
+
 RUN useradd --create-home --uid 10001 app \
     && chown -R app:app /app
 USER app
 
 EXPOSE 8000
-CMD ["uvicorn", "agplat.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "agplat.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]

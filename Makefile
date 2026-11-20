@@ -19,6 +19,12 @@ api: ## Run the API on the host with reload (faster than rebuilding)
 test: ## Unit and HTTP tests: no model, no network, no database
 	uv run pytest -q
 
+test-all: ## Run all tests with coverage (fails under the configured floor)
+	uv run pytest --cov=agplat --cov-report=term-missing
+
+docker-smoke: ## Build the image and smoke-test it without bind mounts
+	./scripts/docker-smoke.sh
+
 lint: ## Lint
 	uv run ruff check src tests
 
@@ -29,7 +35,7 @@ fmt: ## Format and sort imports (matches Zed's format-on-save)
 	uv run ruff check --select I --fix src tests
 	uv run ruff format src tests
 
-check: lint typecheck test ## Run everything CI runs
+check: lint typecheck test-all ## Host checks: lint, types, tests, coverage
 
 smoke: ## Hit a running API: health, agents, one live run
 	@curl -fsS http://127.0.0.1:8000/health && echo

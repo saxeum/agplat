@@ -6,6 +6,10 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 
+# Test coverage
+.coverage
+.coverage.*
+
 # Local config and data
 .env
 data/

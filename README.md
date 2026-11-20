@@ -6,6 +6,8 @@ behind it, Postgres with pgvector underneath, Docker around it all.
 **Design: [DESIGN.md](DESIGN.md).** Start there; this file is the quickstart.
 **Stage 0 notes: [docs/stage-0.md](docs/stage-0.md).** What exists now, and the
 Pydantic AI docs behind each decision.
+**Testing policy: [docs/testing.md](docs/testing.md).** Host for code, Docker for
+the boundary.
 
 Current status: **Step 0** — one agent, two read endpoints, one run endpoint.
 No database and no tools yet. See [DESIGN.md §16](DESIGN.md#16-build-order) for
@@ -34,8 +36,10 @@ On the host (faster while reading code):
 uv sync
 make api        # :8000 with reload
 make test       # no model, no network, no database
+make test-all   # tests + coverage (fails under 95%)
 make typecheck  # basedpyright, standard mode
-make check      # lint + typecheck + test
+make check      # lint + typecheck + tests + coverage
+make docker-smoke  # build the image; health and agents; no model call
 ```
 
 ## Endpoints (Step 0)
