@@ -8,7 +8,6 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     environment:
-      AGPLAT_MODEL: ${AGPLAT_MODEL:-ollama:qwen3}
       # Ollama on the host, not in this compose file yet.
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
       PYTHONPATH: /app/src

@@ -1,4 +1,5 @@
 name: assistant
+model: ollama:qwen3
 description: General local assistant. No tools yet.
 instructions: |
   You are agplat's assistant, a local agent running on the user's machine.

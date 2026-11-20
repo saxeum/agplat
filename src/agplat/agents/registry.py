@@ -30,7 +30,8 @@ class AgentRegistry:
     agents: dict[str, LoadedAgent]
 
     @classmethod
-    def load(cls, directory: Path, *, default_model: str | Model) -> "AgentRegistry":
+    def load(cls, directory: Path, *, model: Model | None = None) -> "AgentRegistry":
+        """Build every agent. ``model`` is a test override; production uses the spec's model."""
         paths = sorted(directory.glob("*.yaml"))
         if not paths:
             raise ValueError(f"{directory}: no *.yaml manifests found")
@@ -40,12 +41,14 @@ class AgentRegistry:
             try:
                 spec = AgentSpec.from_file(path)
                 name = spec.name or path.stem
+                if not spec.model:
+                    raise ValueError(f"{path}: model is required")
                 if name in agents:
                     raise ValueError(f"{path}: duplicate agent name {name!r}")
                 agent = Agent.from_spec(
                     spec,
                     deps_type=RunDeps,
-                    model=spec.model or default_model,
+                    model=model,
                     name=name,
                 )
             except (yaml.YAMLError, ValidationError, UserError) as exc:

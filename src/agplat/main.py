@@ -26,10 +26,7 @@ def create_app(
     # without extra exports; compose overrides it for host.docker.internal.
     os.environ.setdefault("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 
-    registry = registry or AgentRegistry.load(
-        settings.agents_dir,
-        default_model=settings.model,
-    )
+    registry = registry or AgentRegistry.load(settings.agents_dir)
 
     app = FastAPI(title="agplat", version="0.0.0")
     app.state.settings = settings

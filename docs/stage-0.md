@@ -1,6 +1,6 @@
 # Stage 0 — one agent behind four endpoints
 
-Status: **implemented** · 2026-11-21 · commit `46cc687` · Pydantic AI `2.71.0`
+Status: **implemented** · 2026-11-21 · commit `c04f625` · Pydantic AI `2.71.0`
 
 **TL;DR:** FastAPI loads native Pydantic AI `AgentSpec` YAML once at startup, builds one agent, and
 exposes discovery plus one run endpoint. No database, tools, streaming, auth or retrieval yet.
@@ -12,8 +12,8 @@ exposes discovery plus one run endpoint. No database, tools, streaming, auth or 
 | GET | `/agents/{name}` | one agent, with its SHA-256 digest |
 | POST | `/agents/{name}/runs` | `{"input": "..."}` → `{run_id, output, usage}` |
 
-The run endpoint needs a model. The default is `ollama:qwen3`; tests inject a `TestModel` registry
-and never touch it.
+The run endpoint needs a model. `agents/assistant.yaml` names `ollama:qwen3`; tests inject a
+`TestModel` registry and never touch it.
 
 ## Files
 
@@ -27,7 +27,7 @@ src/agplat/agents/registry.py    load specs once; digest each file
 tests/                           HTTP and registry tests, TestModel only
 ```
 
-`src/` is 323 lines including docstrings; `tests/` is 112.
+`src/` is 317 lines including docstrings; `tests/` is 120.
 
 ## Decisions
 
@@ -40,13 +40,13 @@ tests/                           HTTP and registry tests, TestModel only
 - **Framework split.** Pydantic AI owns model calls, tool dispatch, retries, usage accounting and
   `RunContext`; agplat owns spec loading, run identity, limits, storage and the HTTP contract.
 - **One construction site.** `AgentRegistry.load()` calls `Agent.from_spec()`, sets
-  `deps_type=RunDeps`, and supplies the default model when the spec omits one.
-- **Startup validates.** Invalid YAML/spec fields, a model or capability that cannot be built,
-  duplicate names, and an empty agents directory all fail before serving.
+  `deps_type=RunDeps`, and requires a `model` in every spec.
+- **Startup validates.** Invalid YAML/spec fields, a missing `model`, a model or capability that
+  cannot be built, duplicate names, and an empty agents directory all fail before serving.
 - **Dependencies carry identity, not secrets.** `RunDeps(run_id, agent, depth)` is frozen and never
   shown to the model. The platform creates `run_id`; delegation will create `depth + 1`.
-- **Model is an env string.** `AGPLAT_MODEL` defaults to `ollama:qwen3`; a spec may override it.
-  Provider credentials stay in Pydantic AI's own environment variables.
+- **Model is a spec field.** `agents/assistant.yaml` names `ollama:qwen3`; a spec without `model`
+  fails startup. Provider credentials stay in Pydantic AI's own environment variables.
 - **Tests replace the model.** `create_app(settings=..., registry=...)` injects a `TestModel`
   registry; the HTTP layer, spec loading, agent construction and usage accounting all run.
 - **Every run is bounded.** `UsageLimits(request_limit=4, tool_calls_limit=AGPLAT_MAX_TOOL_CALLS)`
@@ -75,7 +75,7 @@ From the repository root:
 make test
 ```
 
-`10 passed` (Python 3.12, `TestModel`, no network).
+`11 passed` (Python 3.12, `TestModel`, no network).
 
 ```
 make lint
@@ -87,7 +87,7 @@ make lint
 find src -name '*.py' -print0 | xargs -0 cat | wc -l
 ```
 
-`323`
+`317`
 
 Key references: [Agent Specs](https://pydantic.dev/docs/ai/core-concepts/agent-spec/),
 [Agents](https://pydantic.dev/docs/ai/core-concepts/agent/), [Testing](https://pydantic.dev/docs/ai/guides/testing/),

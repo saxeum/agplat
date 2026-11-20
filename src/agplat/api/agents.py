@@ -25,12 +25,12 @@ def _settings(request: Request) -> Settings:
     return request.app.state.settings
 
 
-def _info(loaded: LoadedAgent, name: str, default_model: str) -> AgentInfo:
+def _info(loaded: LoadedAgent, name: str) -> AgentInfo:
     spec = loaded.spec
     return AgentInfo(
         name=name,
         description=spec.description or "",
-        model=spec.model or default_model,
+        model=spec.model,
         digest=loaded.digest,
     )
 
@@ -38,9 +38,7 @@ def _info(loaded: LoadedAgent, name: str, default_model: str) -> AgentInfo:
 @router.get("", response_model=list[AgentInfo])
 def list_agents(request: Request) -> list[AgentInfo]:
     """Every agent this process loaded, in filename order."""
-    registry = _registry(request)
-    default_model = _settings(request).model
-    return [_info(loaded, name, default_model) for name, loaded in registry.agents.items()]
+    return [_info(loaded, name) for name, loaded in _registry(request).agents.items()]
 
 
 @router.get("/{name}", response_model=AgentInfo)
@@ -49,7 +47,7 @@ def get_agent(name: str, request: Request) -> AgentInfo:
         loaded = _registry(request).get(name)
     except KeyError:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown agent: {name}") from None
-    return _info(loaded, name, _settings(request).model)
+    return _info(loaded, name)
 
 
 @router.post("/{name}/runs", response_model=RunResponse)

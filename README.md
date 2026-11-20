@@ -24,9 +24,9 @@ curl -s -X POST http://127.0.0.1:8000/agents/assistant/runs \
   -d '{"input": "hello"}'
 ```
 
-The last call needs a model. The default is a local Ollama model
-(`ollama:qwen3`); run Ollama on the host, or copy `.env.example` to `.env` and
-point `AGPLAT_MODEL` at any Pydantic AI model string.
+The last call needs a model. `agents/assistant.yaml` names a local Ollama model
+(`ollama:qwen3`); run Ollama on the host, or edit that `model:` field to any
+Pydantic AI model string.
 
 On the host (faster while reading code):
 
