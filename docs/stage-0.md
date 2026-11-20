@@ -1,6 +1,6 @@
 # Stage 0 — one agent behind four endpoints
 
-Status: **implemented** · 2026-11-21 · commit `1185d0b` · Pydantic AI `2.71.0`
+Status: **implemented** · 2026-11-21 · commit `46cc687` · Pydantic AI `2.71.0`
 
 `DESIGN.md` calls this **Step 0**; stage and step are the same sequence here. This page records what
 Stage 0 contains and links the Pydantic AI documentation that justifies each shape. It is evidence
