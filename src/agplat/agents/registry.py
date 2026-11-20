@@ -1,34 +1,24 @@
-"""Load every manifest once; the registry is read-only for the process lifetime.
+"""Load native Pydantic AI AgentSpecs once; the registry is read-only afterwards."""
 
-The registry is also where cross-manifest rules live: a delegate must exist, and
-the delegation graph must be acyclic. Both are startup errors, because a broken
-agent graph that only fails at request time is a production incident wearing a
-config typo.
-"""
-
-from collections.abc import Callable, Mapping
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
+import yaml
+from pydantic import ValidationError
 from pydantic_ai import Agent
+from pydantic_ai.agent.spec import AgentSpec
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 
-from agplat.agents.loader import (
-    ManifestError,
-    compile_agent,
-    load_manifest,
-    manifest_digest,
-)
-from agplat.agents.manifest import AgentManifest
 from agplat.deps import RunDeps
 
 
 @dataclass(frozen=True)
 class LoadedAgent:
-    """One manifest, the agent compiled from it, and the bytes it came from."""
+    """One spec, the agent built from it, and the bytes it came from."""
 
-    manifest: AgentManifest
+    spec: AgentSpec
     agent: Agent[RunDeps, str]
     digest: str
 
@@ -40,61 +30,36 @@ class AgentRegistry:
     agents: dict[str, LoadedAgent]
 
     @classmethod
-    def load(
-        cls,
-        directory: Path,
-        *,
-        default_model: str | Model,
-        tools: Mapping[str, Callable[..., Any]] | None = None,
-    ) -> "AgentRegistry":
+    def load(cls, directory: Path, *, default_model: str | Model) -> "AgentRegistry":
         paths = sorted(directory.glob("*.yaml"))
         if not paths:
-            raise ManifestError(f"{directory}: no *.yaml manifests found")
+            raise ValueError(f"{directory}: no *.yaml manifests found")
 
-        manifests = {path.stem: load_manifest(path) for path in paths}
-        _check_delegates(manifests)
-
-        return cls(
-            agents={
-                name: LoadedAgent(
-                    manifest=manifest,
-                    agent=compile_agent(manifest, default_model=default_model, tools=tools),
-                    digest=manifest_digest(directory / f"{name}.yaml"),
+        agents: dict[str, LoadedAgent] = {}
+        for path in paths:
+            try:
+                spec = AgentSpec.from_file(path)
+                name = spec.name or path.stem
+                if name in agents:
+                    raise ValueError(f"{path}: duplicate agent name {name!r}")
+                agent = Agent.from_spec(
+                    spec,
+                    deps_type=RunDeps,
+                    model=spec.model or default_model,
+                    name=name,
                 )
-                for name, manifest in manifests.items()
-            }
-        )
+            except (yaml.YAMLError, ValidationError, UserError) as exc:
+                raise ValueError(f"{path}: {exc}") from exc
+
+            agents[name] = LoadedAgent(
+                spec=spec,
+                agent=agent,
+                digest=hashlib.sha256(path.read_bytes()).hexdigest()[:12],
+            )
+        return cls(agents=agents)
 
     def get(self, name: str) -> LoadedAgent:
         try:
             return self.agents[name]
         except KeyError:
             raise KeyError(f"unknown agent: {name}") from None
-
-
-def _check_delegates(manifests: dict[str, AgentManifest]) -> None:
-    """Every delegate exists, and following delegates cannot loop."""
-    for name, manifest in manifests.items():
-        for delegate in manifest.delegates:
-            if delegate not in manifests:
-                raise ManifestError(
-                    f"{name}: unknown delegate {delegate!r}; known: {sorted(manifests)}"
-                )
-
-    visiting: set[str] = set()
-    done: set[str] = set()
-
-    def visit(name: str, path: list[str]) -> None:
-        if name in done:
-            return
-        if name in visiting:
-            cycle = " -> ".join([*path, name])
-            raise ManifestError(f"delegate cycle: {cycle}")
-        visiting.add(name)
-        for delegate in manifests[name].delegates:
-            visit(delegate, [*path, name])
-        visiting.remove(name)
-        done.add(name)
-
-    for name in manifests:
-        visit(name, [])

@@ -55,19 +55,20 @@ src/agplat/main.py        composition root
 src/agplat/settings.py    AGPLAT_* environment
 src/agplat/deps.py        RunDeps: what a tool may know
 src/agplat/api/           HTTP routes and response models
-src/agplat/agents/        manifest schema, compiler, registry
-tests/                    HTTP and manifest tests, TestModel only
+src/agplat/agents/        native AgentSpec loader and registry
+tests/                    HTTP and registry tests, TestModel only
 ```
 
-Read them in that order. Step 0 is about 460 lines of `src/`, docstrings
-included; the compiler (`agents/loader.py`) is the part worth rereading.
+Read them in that order. Step 0 is about 320 lines of `src/`, docstrings
+included; the registry (`agents/registry.py`) is the part worth rereading.
 
 ## The rule this repo is built around
 
-A manifest is **data**. It may name tools that the platform registered, and
-delegates that exist, and nothing else: no URLs, no code, no provider
-credentials. `compile_agent()` is the only function allowed to construct an
-agent, so if a field cannot pass through it, it cannot reach a model.
+A manifest is a **native Pydantic AI `AgentSpec`**. It can name a model, instructions,
+and built-in capabilities; `Agent.from_spec()` is the only function that builds an
+agent. That trusts the YAML, so manifests are reviewed like code: the trust boundary
+is the repository, not the file. The platform still owns run identity, usage limits,
+and the HTTP contract.
 
 ## Not here
 

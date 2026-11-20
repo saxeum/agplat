@@ -30,6 +30,4 @@ class AgentInfo(BaseModel):
     name: str
     description: str
     model: str
-    tools: list[str]
-    delegates: list[str]
     digest: str

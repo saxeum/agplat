@@ -25,7 +25,7 @@ inject a `TestModel` registry.
 
 ## The shape, in files
 
-`src/` is 457 lines including docstrings; `tests/` is 122. The interesting part is not the size, it
+`src/` is 323 lines including docstrings; `tests/` is 111. The interesting part is not the size, it
 is that each file has exactly one job.
 
 ```
@@ -35,10 +35,8 @@ src/agplat/settings.py    AGPLAT_* environment
 src/agplat/deps.py        RunDeps: what a tool may know about the current run
 src/agplat/api/           routes and the public JSON contract
 src/agplat/agents/
-  manifest.py             the YAML schema (pydantic)
-  loader.py               YAML -> AgentManifest -> Pydantic AI Agent
-  registry.py             load once; validate delegates; digest each file
-tests/                    HTTP and manifest tests, TestModel only
+  registry.py             load native AgentSpecs once; digest each file
+tests/                    HTTP and registry tests, TestModel only
 ```
 
 ## Decisions
@@ -55,69 +53,55 @@ from the other side: the inner loop — call the model, run a tool, feed the res
 and the work with leverage is the layer around it
 ([Pydantic AI v2](https://pydantic.dev/articles/pydantic-ai-v2)).
 
-What agplat owns: manifest validation, tool resolution, run identity, usage policy, storage, and the
-HTTP contract. What Pydantic AI owns: model calls, tool dispatch, retries, usage accounting, and
+What agplat owns: loading specs, run identity, usage policy, storage, and the HTTP contract. What
+Pydantic AI owns: spec validation, model calls, tool dispatch, retries, usage accounting, and
 `RunContext`. The dependency is pinned to `pydantic-ai-slim[openai]>=2.71,<3` and locked in
 `uv.lock`; CI runs `uv lock --check` so the two cannot drift apart.
 
-### 2. The manifest is data — deliberately not an `AgentSpec`
+### 2. The manifest is a native `AgentSpec`
 
-Pydantic AI already supports declarative agents: `Agent.from_file()` and `AgentSpec` load YAML with
-`model`, `instructions`, `capabilities`, `model_settings` and more
-([Agent Specs](https://pydantic.dev/docs/ai/core-concepts/agent-spec/)). **Stage 0 does not use
-them**, and the documentation says why:
+Pydantic AI already loads declarative agents: `Agent.from_file()` is
+`Agent.from_spec(AgentSpec.from_file(path), ...)`, and the file is an `AgentSpec`
+([Agent Specs](https://pydantic.dev/docs/ai/core-concepts/agent-spec/)). Stage 0 uses that format
+directly; there is no schema of our own to keep in sync.
 
-> A spec has the same authority as the code that builds the agent. It chooses the model and provider,
-> the instructions, and every capability with its arguments, including the endpoints the agent
-> connects to. […] Load specs only from sources you trust.
+That trusts the YAML. A spec has the same authority as the code that builds the agent — it chooses
+the model and provider, the instructions, and every capability with its arguments, including the
+endpoints the agent connects to. The docs say to load specs only from sources you trust. Here the
+source is this repository: anyone who can commit a manifest can already change `main.py`, so a YAML
+commit is not a new privilege. **The trust boundary is the repo, not the file extension.**
 
-A manifest under `agents/` is written by whoever can commit to this repo, so that warning is not
-hypothetical. Our schema is the restricted subset:
-
-```python
-name: str          # ^[a-z][a-z0-9_-]{0,31}$, must equal the filename stem
-description: str
-instructions: str  # non-empty
-model: str | None  # provider:model, or null -> AGPLAT_MODEL
-tools: tuple[str, ...]      # names the platform registered
-delegates: tuple[str, ...]  # names of other manifests
-```
-
-No capabilities, no MCP URLs, no `model_settings`, no code. `extra="forbid"` means an unknown key
-fails startup instead of being ignored
-([Pydantic config](https://docs.pydantic.dev/latest/api/config/)). Adding a capability or an MCP
-server is therefore a platform change with a review, not a YAML edit.
+What this buys: `AgentManifest`, the parallel field list and the deny-list are gone. What it costs:
+Pydantic's default is to ignore unknown keys, so a typo in an optional field can be silently
+ignored. That is the trade accepted here — see §13 of `DESIGN.md` for the trigger that reverses it
+if manifests ever arrive from outside this repository.
 
 ### 3. One construction site
 
-`compile_agent()` in `src/agplat/agents/loader.py` is the only function that calls `Agent(...)`.
-Everything a manifest may influence has to pass through it.
+`AgentRegistry.load()` in `src/agplat/agents/registry.py` is the only function that calls
+`Agent.from_spec()`. It reads each `*.yaml` with `AgentSpec.from_file()`, sets `deps_type=RunDeps`,
+and passes the process default model when the spec does not name one.
 
-`compile_agent()` takes a mapping of tool name to function; the registry passes it through and will
-own it once tools arrive. A function tool's JSON schema is derived from its signature and docstring
-([Function Tools](https://pydantic.dev/docs/ai/tools-toolsets/tools/)), so a manifest cannot describe
-a new tool — it can only name a key in that mapping. Unknown names fail at startup with the list of
-known names. The same registry will hold toolsets when MCP arrives
-([Toolsets](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/)).
+Capabilities, model settings, toolsets and the rest are the documented `AgentSpec` fields; they are
+resolved by Pydantic AI, not re-parsed here. A manifest can add a capability, and therefore an
+endpoint, because that is what a native spec does. It cannot define a Python function; function
+tools and the platform's tool registry are arguments to `Agent.from_spec()` in platform code.
 
 ### 4. Startup is the validation boundary
 
-A broken agent graph that only fails at request time is a production incident wearing a config typo.
-The registry therefore refuses, at load time:
+The spec is validated once, when the registry loads:
 
 | Failure | Where it is caught |
 | --- | --- |
-| YAML is not a mapping, or is invalid YAML | `load_manifest()` |
-| `name` does not equal the filename stem | `load_manifest()` |
-| unknown key in the YAML | `AgentManifest` (`extra="forbid"`) |
-| a tool name the platform has not registered | `compile_agent()` |
-| a delegate that does not exist | `AgentRegistry.load()` |
-| a delegate cycle (`a -> b -> a`) | `AgentRegistry.load()` |
+| invalid YAML/JSON, or an invalid `AgentSpec` field | `AgentSpec.from_file()` |
+| a model or capability that cannot be built | `Agent.from_spec()` |
+| a duplicate agent name | `AgentRegistry.load()` |
+| no manifests | `AgentRegistry.load()` |
 
-Delegates are checked even though nothing uses them yet. Delegation is "an agent calls another agent
-from inside a tool and takes control back when it finishes"
-([Multi-agent Applications](https://pydantic.dev/docs/ai/guides/multi-agent-applications/)); a name
-that only resolves on the first user request is exactly the failure this check removes.
+Invalid input fails the process; it never becomes a request-time surprise. Delegates are not in the
+manifest: delegation is "an agent calls another agent from inside a tool and takes control back when
+it finishes" ([Multi-agent Applications](https://pydantic.dev/docs/ai/guides/multi-agent-applications/)),
+so the delegate tool arrives with the platform code in Step 7.
 
 Graph-based workflows are deferred. They are the right tool for a fixed, branching process, not for
 "ask the right specialist" ([Graphs](https://pydantic.dev/docs/ai/graph/graph/)).
@@ -152,7 +136,7 @@ reach an Ollama on the host.
 ### 7. Tests replace the model, not the application
 
 `create_app(settings=..., registry=...)` takes both, and `tests/conftest.py` builds a registry with
-`TestModel`. The HTTP layer, manifest validation, compilation and usage accounting all execute; no
+`TestModel`. The HTTP layer, spec loading, agent construction and usage accounting all execute; no
 model, no network, no database ([Unit testing](https://pydantic.dev/docs/ai/guides/testing/),
 [`pydantic_ai.models.test`](https://pydantic.dev/docs/ai/api/models/test/)).
 
@@ -209,13 +193,10 @@ decision rather than a surprise.
    Compose overrides the command with `agplat.main:create_app --factory`, so the compose path is
    unaffected; `docker run` of the image is not. The image also does not `COPY agents/` — compose
    mounts it.
-2. **README claims the code is "under 200 lines"; `src/` is 457.** The claim predates the docstrings
-   and is now false.
-3. **`RunDeps.depth` has no cap.** `AGPLAT_MAX_DEPTH` appears in `DESIGN.md` but not in `Settings`,
+2. **`RunDeps.depth` has no cap.** `AGPLAT_MAX_DEPTH` appears in `DESIGN.md` but not in `Settings`,
    and nothing creates a child run yet.
-4. **`delegates` is validated but unused.** No tool reads it until Stage 7.
-5. **`run_id` is returned but not stored.** A restart loses it; Stage 1 adds the row.
-6. **`request_limit=4` is a constant**, not an `AGPLAT_*` setting. It was the smallest honest number
+3. **`run_id` is returned but not stored.** A restart loses it; Stage 1 adds the row.
+4. **`request_limit=4` is a constant**, not an `AGPLAT_*` setting. It was the smallest honest number
    for a single-turn endpoint.
 
 ## Checking the claims
@@ -226,7 +207,7 @@ Run from the repository root. Expected result is printed below each block.
 make test
 ```
 
-`11 passed` in well under a second (Python 3.12, `TestModel`, no network). The wall time varies run
+`10 passed` in well under a second (Python 3.12, `TestModel`, no network). The wall time varies run
 to run; the count and the absence of network calls are the claim.
 
 ```
@@ -241,7 +222,7 @@ Source line count quoted above:
 find src -name '*.py' -print0 | xargs -0 cat | wc -l
 ```
 
-`457`
+`323`
 
 Every external link on this page, checked 2026-11-21. Each line should print `200`:
 
@@ -252,7 +233,6 @@ for u in \
   https://pydantic.dev/docs/ai/core-concepts/dependencies/ \
   https://pydantic.dev/docs/ai/core-concepts/citations/ \
   https://pydantic.dev/docs/ai/tools-toolsets/tools/ \
-  https://pydantic.dev/docs/ai/tools-toolsets/toolsets/ \
   https://pydantic.dev/docs/ai/models/overview/ \
   https://pydantic.dev/docs/ai/api/models/ollama/ \
   https://pydantic.dev/docs/ai/api/models/test/ \
@@ -264,7 +244,6 @@ for u in \
   https://pydantic.dev/docs/ai/mcp/server/ \
   https://pydantic.dev/docs/ai/mcp/client/ \
   https://pydantic.dev/docs/ai/graph/graph/ \
-  https://docs.pydantic.dev/latest/api/config/ \
   https://pydantic.dev/articles/pydantic-ai-v2 \
   https://pydantic.dev/articles/why-traces-when-you-have-logs ; do
   curl -s -o /dev/null -w "%{http_code} $u\n" -L "$u"

@@ -19,8 +19,7 @@ def test_agent_detail_exposes_the_digest(client: TestClient) -> None:
     body = client.get("/agents/assistant").json()
 
     assert body["digest"]
-    assert body["tools"] == []
-    assert body["delegates"] == []
+    assert body["description"]
 
 
 def test_unknown_agent_is_404(client: TestClient) -> None:
