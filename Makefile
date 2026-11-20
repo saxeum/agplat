@@ -16,6 +16,9 @@ logs: ## Follow API logs
 api: ## Run the API on the host with reload (faster than rebuilding)
 	uv run uvicorn agplat.main:create_app --factory --reload --host 127.0.0.1 --port 8000
 
+db-migrate: ## Apply SQL migrations to AGPLAT_DB_URL
+	uv run python -m agplat.migrate
+
 test: ## Unit and HTTP tests: no model, no network, no database
 	uv run pytest -q
 

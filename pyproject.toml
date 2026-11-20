@@ -12,6 +12,7 @@ dependencies = [
     "pydantic-ai-slim[openai]>=2.71,<3",
     "pyyaml>=6.0,<7",
     "python-dotenv>=1.2.4",
+    "asyncpg>=0.32.0",
 ]
 
 [dependency-groups]

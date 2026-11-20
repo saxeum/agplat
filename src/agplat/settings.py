@@ -21,6 +21,9 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # Postgres for run records. Compose overrides the host with the db service.
+    db_url: str = "postgresql://agplat:agplat@127.0.0.1:5432/agplat"
+
     # Where the *.yaml agent manifests live, relative to the working directory.
     agents_dir: Path = Path("agents")
 
