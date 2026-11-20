@@ -62,6 +62,10 @@ class RunStore(Protocol):
 
     async def finish_failed(self, run_id: str, *, error: str, latency_ms: int) -> None: ...
 
+    async def get(self, run_id: str) -> "Run | None": ...
+
+    async def list_children(self, parent_id: str) -> list["Run"]: ...
+
 
 class RunRepository:
     """All SQL for runs lives here; routes never see a query."""

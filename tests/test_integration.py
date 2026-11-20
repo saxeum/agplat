@@ -108,10 +108,22 @@ def test_route_persists_a_run(db_url: str) -> None:
 
     with TestClient(app) as client:
         response = client.post("/agents/assistant/runs", json={"input": "hi"})
+        run_id = response.json()["run_id"]
+
+    restarted = create_app(
+        settings=Settings(db_url=db_url, agents_dir=AGENTS_DIR),
+        registry=registry,
+        runs=RunRepository(db_url),
+    )
+    with TestClient(restarted) as client:
+        detail = client.get(f"/runs/{run_id}")
 
     assert response.status_code == 200
     body = response.json()
-    run_id = body["run_id"]
+    assert detail.status_code == 200
+    assert detail.json()["run_id"] == run_id
+    assert detail.json()["usage"]["requests"] == body["usage"]["requests"]
+    assert detail.json()["manifest_digest"] == registry.get("assistant").digest
 
     async def read() -> Run | None:
         return await RunRepository(db_url).get(run_id)
