@@ -37,6 +37,7 @@ uv sync
 make api        # :8000 with reload
 make test       # no model, no network, no database
 make test-all   # tests + coverage (fails under 95%)
+make test-integration  # host pytest against compose Postgres
 make typecheck  # basedpyright, standard mode
 make check      # lint + typecheck + tests + coverage
 make docker-smoke  # build the image; health and agents; no model call
