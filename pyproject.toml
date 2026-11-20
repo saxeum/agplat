@@ -33,6 +33,8 @@ build-backend = "uv_build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not integration'"
+markers = ["integration: requires AGPLAT_TEST_DB_URL"]
 
 [tool.ruff]
 line-length = 100
