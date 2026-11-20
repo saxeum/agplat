@@ -5,7 +5,7 @@ help: ## Show this help
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-8s\033[0m %s\n", $$1, $$2}'
 
 up: ## Build and start the API in Docker (127.0.0.1:8000)
-	docker compose up --build
+	docker compose up --build -d
 
 down: ## Stop the container
 	docker compose down
@@ -22,9 +22,18 @@ test: ## Unit and HTTP tests: no model, no network, no database
 lint: ## Lint
 	uv run ruff check src tests
 
-fmt: ## Format
+typecheck: ## Type check (basedpyright, Zed's standard mode)
+	uv run basedpyright
+
+fmt: ## Format and sort imports (matches Zed's format-on-save)
+	uv run ruff check --select I --fix src tests
 	uv run ruff format src tests
 
-smoke: ## Hit a running API
+check: lint typecheck test ## Run everything CI runs
+
+smoke: ## Hit a running API: health, agents, one live run
 	@curl -fsS http://127.0.0.1:8000/health && echo
 	@curl -fsS http://127.0.0.1:8000/agents && echo
+	@curl -fsS -X POST http://127.0.0.1:8000/agents/assistant/runs \
+		-H 'content-type: application/json' \
+		-d '{"input": "Reply with the single word: ready"}' && echo

@@ -1,5 +1,5 @@
-# Step 0: the API only. Postgres joins in Step 1, Ollama when a real model is
-# needed. Only loopback is published: this service has no auth by design.
+# Step 0: the API only. Postgres joins in Step 1. Only loopback is published:
+# this service has no auth by design.
 name: agplat
 
 services:
@@ -7,18 +7,17 @@ services:
     build: .
     ports:
       - "127.0.0.1:8000:8000"
+    env_file:
+      # Same key file used on the host; values are not baked into the image.
+      - path: ${HOME}/.env
+        required: false
     environment:
-      AGPLAT_MODEL: ${AGPLAT_MODEL:-ollama:qwen3}
-      # Ollama on the host, not in this compose file yet.
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
       PYTHONPATH: /app/src
     volumes:
       # Edit on the host, reload in the container. The image still works
       # without these mounts; they are a development convenience.
       - ./src:/app/src
       - ./agents:/app/agents
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     command: uvicorn agplat.main:create_app --factory --host 0.0.0.0 --port 8000 --reload
     healthcheck:
       test:

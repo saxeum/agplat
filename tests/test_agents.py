@@ -18,9 +18,10 @@ def test_lists_the_assistant(client: TestClient) -> None:
 def test_agent_detail_exposes_the_digest(client: TestClient) -> None:
     body = client.get("/agents/assistant").json()
 
+    assert set(body) == {"name", "description", "model", "digest"}
+    assert body["model"] == "deepseek:deepseek-flash"
     assert body["digest"]
-    assert body["tools"] == []
-    assert body["delegates"] == []
+    assert body["description"]
 
 
 def test_unknown_agent_is_404(client: TestClient) -> None:

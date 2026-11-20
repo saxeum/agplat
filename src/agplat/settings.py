@@ -21,10 +21,6 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # The model every agent uses unless its manifest names one. A local Ollama
-    # model by default, so the PoC works with no API key.
-    model: str = "ollama:qwen3"
-
     # Where the *.yaml agent manifests live, relative to the working directory.
     agents_dir: Path = Path("agents")
 

@@ -1,7 +1,7 @@
 """The agent surface: discover what exists, run one.
 
 Routes do HTTP only. They never build a prompt, open a connection or know which
-model is in use; the registry and the compiled agent own all of that.
+model is in use; the registry and the built agent own all of that.
 """
 
 from uuid import uuid4
@@ -25,14 +25,13 @@ def _settings(request: Request) -> Settings:
     return request.app.state.settings
 
 
-def _info(loaded: LoadedAgent, default_model: str) -> AgentInfo:
-    manifest = loaded.manifest
+def _info(loaded: LoadedAgent, name: str) -> AgentInfo:
+    spec = loaded.spec
+    assert spec.model is not None  # AgentRegistry.load() rejects a spec without one
     return AgentInfo(
-        name=manifest.name,
-        description=manifest.description,
-        model=manifest.model or default_model,
-        tools=list(manifest.tools),
-        delegates=list(manifest.delegates),
+        name=name,
+        description=str(spec.description or ""),
+        model=spec.model,
         digest=loaded.digest,
     )
 
@@ -40,9 +39,7 @@ def _info(loaded: LoadedAgent, default_model: str) -> AgentInfo:
 @router.get("", response_model=list[AgentInfo])
 def list_agents(request: Request) -> list[AgentInfo]:
     """Every agent this process loaded, in filename order."""
-    registry = _registry(request)
-    default_model = _settings(request).model
-    return [_info(loaded, default_model) for loaded in registry.agents.values()]
+    return [_info(loaded, name) for name, loaded in _registry(request).agents.items()]
 
 
 @router.get("/{name}", response_model=AgentInfo)
@@ -51,7 +48,7 @@ def get_agent(name: str, request: Request) -> AgentInfo:
         loaded = _registry(request).get(name)
     except KeyError:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown agent: {name}") from None
-    return _info(loaded, _settings(request).model)
+    return _info(loaded, name)
 
 
 @router.post("/{name}/runs", response_model=RunResponse)

@@ -4,6 +4,8 @@ A local, REST-only, multi-agent knowledge platform. FastAPI in front, Pydantic A
 behind it, Postgres with pgvector underneath, Docker around it all.
 
 **Design: [DESIGN.md](DESIGN.md).** Start there; this file is the quickstart.
+**Stage 0 notes: [docs/stage-0.md](docs/stage-0.md).** What exists now, and the
+Pydantic AI docs behind each decision.
 
 Current status: **Step 0** — one agent, two read endpoints, one run endpoint.
 No database and no tools yet. See [DESIGN.md §16](DESIGN.md#16-build-order) for
@@ -22,9 +24,9 @@ curl -s -X POST http://127.0.0.1:8000/agents/assistant/runs \
   -d '{"input": "hello"}'
 ```
 
-The last call needs a model. The default is a local Ollama model
-(`ollama:qwen3`); run Ollama on the host, or copy `.env.example` to `.env` and
-point `AGPLAT_MODEL` at any Pydantic AI model string.
+The last call needs a model. `agents/assistant.yaml` names `deepseek:deepseek-flash`;
+put `DEEPSEEK_API_KEY` in `~/.env` (loaded at startup), or edit that `model:`
+field to any Pydantic AI model string.
 
 On the host (faster while reading code):
 
@@ -32,6 +34,8 @@ On the host (faster while reading code):
 uv sync
 make api        # :8000 with reload
 make test       # no model, no network, no database
+make typecheck  # basedpyright, standard mode
+make check      # lint + typecheck + test
 ```
 
 ## Endpoints (Step 0)
@@ -53,19 +57,20 @@ src/agplat/main.py        composition root
 src/agplat/settings.py    AGPLAT_* environment
 src/agplat/deps.py        RunDeps: what a tool may know
 src/agplat/api/           HTTP routes and response models
-src/agplat/agents/        manifest schema, compiler, registry
-tests/                    HTTP and manifest tests, TestModel only
+src/agplat/agents/        native AgentSpec loader and registry
+tests/                    HTTP and registry tests, TestModel only
 ```
 
-Read them in that order. The whole of Step 0 is under 200 lines; the compiler
-(`agents/loader.py`) is the part worth rereading.
+Read them in that order. Step 0 is about 320 lines of `src/`, docstrings
+included; the registry (`agents/registry.py`) is the part worth rereading.
 
 ## The rule this repo is built around
 
-A manifest is **data**. It may name tools that the platform registered, and
-delegates that exist, and nothing else: no URLs, no code, no provider
-credentials. `compile_agent()` is the only function allowed to construct an
-agent, so if a field cannot pass through it, it cannot reach a model.
+A manifest is a **native Pydantic AI `AgentSpec`**. It can name a model, instructions,
+and built-in capabilities; `Agent.from_spec()` is the only function that builds an
+agent. That trusts the YAML, so manifests are reviewed like code: the trust boundary
+is the repository, not the file. The platform still owns run identity, usage limits,
+and the HTTP contract.
 
 ## Not here
 
