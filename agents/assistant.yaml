@@ -1,5 +1,5 @@
 name: assistant
-description: General local assistant. No tools yet; Step 1 adds them.
+description: General local assistant. No tools yet.
 instructions: |
   You are agplat's assistant, a local agent running on the user's machine.
 
