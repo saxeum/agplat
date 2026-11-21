@@ -1,12 +1,10 @@
 """The agent surface: discover what exists, run one, stream one.
 
-Routes do HTTP only. They never build a prompt, open a connection or know which
-model is in use; the registry and the built agent own all of that.
+Routes do HTTP only. They never build a prompt or know which model is in use;
+the registry owns agent construction, and the tracer owns the run record.
 """
 
-import asyncio
 import json
-import logging
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -23,15 +21,14 @@ from pydantic_ai import (
     UsageLimits,
 )
 
+from agplat import tracing
 from agplat.agents.registry import AgentRegistry, LoadedAgent
 from agplat.api.errors import ApiError
 from agplat.api.schemas import AgentInfo, RunRequest, RunResponse, Usage
 from agplat.deps import RunDeps
-from agplat.runs import RunStore
 from agplat.settings import Settings
 
 router = APIRouter(prefix="/agents", tags=["agents"])
-logger = logging.getLogger(__name__)
 
 
 def _registry(request: Request) -> AgentRegistry:
@@ -40,10 +37,6 @@ def _registry(request: Request) -> AgentRegistry:
 
 def _settings(request: Request) -> Settings:
     return request.app.state.settings
-
-
-def _runs(request: Request) -> RunStore:
-    return request.app.state.runs
 
 
 def _info(loaded: LoadedAgent, name: str) -> AgentInfo:
@@ -78,18 +71,26 @@ def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
-async def _record_failure(
-    runs: RunStore,
-    run_id: str,
-    error: str,
-    latency_ms: int,
-) -> None:
-    try:
-        await asyncio.shield(runs.finish_failed(run_id, error=error, latency_ms=latency_ms))
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        logger.exception("could not record failed run %s", run_id)
+def _elapsed_ms(started: float) -> int:
+    return int((time.perf_counter() - started) * 1000)
+
+
+def _run_attributes(run_id: str, name: str, digest: str, prompt: str) -> dict[str, Any]:
+    return {
+        tracing.RUN_ID: run_id,
+        tracing.AGENT: name,
+        tracing.DIGEST: digest,
+        tracing.INPUT: prompt,
+    }
+
+
+def _usage_attributes(usage: RunUsage) -> dict[str, Any]:
+    return {
+        tracing.INPUT_TOKENS: usage.input_tokens,
+        tracing.OUTPUT_TOKENS: usage.output_tokens,
+        tracing.REQUESTS: usage.requests,
+        tracing.COST: str(usage.cost) if usage.cost is not None else None,
+    }
 
 
 @router.get("", response_model=list[AgentInfo])
@@ -113,7 +114,7 @@ def get_agent(name: str, request: Request) -> AgentInfo:
 
 @router.post("/{name}/runs", response_model=RunResponse)
 async def run_agent(name: str, body: RunRequest, request: Request) -> RunResponse:
-    """Run one turn and wait for it. Streaming is the other endpoint."""
+    """Run one turn and wait for it. The run is a span, not a row."""
     try:
         loaded = _registry(request).get(name)
     except KeyError:
@@ -126,48 +127,43 @@ async def run_agent(name: str, body: RunRequest, request: Request) -> RunRespons
     # The platform owns the run id, not the model. Every tool call and child run
     # inherits it, which is what makes a multi-agent trace readable.
     run_id = uuid4().hex
-    runs = _runs(request)
-    await runs.create_running(
-        run_id,
-        agent=name,
-        manifest_digest=loaded.digest,
-        input=body.input,
-    )
-
     started = time.perf_counter()
-    try:
-        result = await loaded.agent.run(
-            body.input,
-            deps=RunDeps(run_id=run_id, agent=name),
-            usage_limits=_limits(_settings(request)),
-        )
-    except Exception as exc:
-        latency_ms = int((time.perf_counter() - started) * 1000)
-        error = str(exc) or type(exc).__name__
-        await _record_failure(runs, run_id, error, latency_ms)
+    failure: str | None = None
+    result: AgentRunResult[str] | None = None
+
+    with tracing.run_span(**_run_attributes(run_id, name, loaded.digest, body.input)) as span:
+        try:
+            result = await loaded.agent.run(
+                body.input,
+                deps=RunDeps(run_id=run_id, agent=name),
+                usage_limits=_limits(_settings(request)),
+            )
+        except Exception as exc:
+            failure = str(exc) or type(exc).__name__
+            tracing.finish_span(
+                span,
+                latency_ms=_elapsed_ms(started),
+                **{tracing.STATUS: "failed", tracing.ERROR: failure},
+            )
+        else:
+            tracing.finish_span(
+                span,
+                latency_ms=_elapsed_ms(started),
+                **{
+                    tracing.STATUS: "ok",
+                    tracing.OUTPUT: result.output,
+                    **_usage_attributes(result.usage),
+                },
+            )
+
+    if failure is not None or result is None:
         raise ApiError(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             "run_failed",
-            error,
+            failure or "run produced no result",
             run_id=run_id,
-        ) from exc
-
-    latency_ms = int((time.perf_counter() - started) * 1000)
-    usage = result.usage
-    await runs.finish_ok(
-        run_id,
-        output=result.output,
-        input_tokens=usage.input_tokens,
-        output_tokens=usage.output_tokens,
-        requests=usage.requests,
-        cost=usage.cost,
-        latency_ms=latency_ms,
-    )
-    return RunResponse(
-        run_id=run_id,
-        output=result.output,
-        usage=_usage(usage),
-    )
+        )
+    return RunResponse(run_id=run_id, output=result.output, usage=_usage(result.usage))
 
 
 async def _stream_run(
@@ -176,66 +172,74 @@ async def _stream_run(
     name: str,
     prompt: str,
     run_id: str,
-    runs: RunStore,
     limits: UsageLimits,
 ) -> AsyncGenerator[str, None]:
     yield _sse("run.started", {"run_id": run_id, "agent": name})
     started = time.perf_counter()
     finished = False
-    try:
-        result: AgentRunResult[str] | None = None
-        async with loaded.agent.run_stream_events(
-            prompt,
-            deps=RunDeps(run_id=run_id, agent=name),
-            usage_limits=limits,
-        ) as events:
-            async for event in events:
-                if isinstance(event, AgentRunResultEvent):
-                    result = event.result
-                elif isinstance(event, PartDeltaEvent) and isinstance(
-                    event.delta, TextPartDelta
-                ):
-                    delta = event.delta.content_delta
-                    if delta:
-                        yield _sse("output.delta", {"delta": delta})
+    with tracing.run_span(**_run_attributes(run_id, name, loaded.digest, prompt)) as span:
+        try:
+            result: AgentRunResult[str] | None = None
+            async with loaded.agent.run_stream_events(
+                prompt,
+                deps=RunDeps(run_id=run_id, agent=name),
+                usage_limits=limits,
+            ) as events:
+                async for event in events:
+                    if isinstance(event, AgentRunResultEvent):
+                        result = event.result
+                    elif isinstance(event, PartDeltaEvent) and isinstance(
+                        event.delta, TextPartDelta
+                    ):
+                        delta = event.delta.content_delta
+                        if delta:
+                            yield _sse("output.delta", {"delta": delta})
 
-        if result is None:
-            raise RuntimeError("run finished without a result")
+            if result is None:
+                raise RuntimeError("run finished without a result")
 
-        latency_ms = int((time.perf_counter() - started) * 1000)
-        await runs.finish_ok(
-            run_id,
-            output=result.output,
-            input_tokens=result.usage.input_tokens,
-            output_tokens=result.usage.output_tokens,
-            requests=result.usage.requests,
-            cost=result.usage.cost,
-            latency_ms=latency_ms,
-        )
-        finished = True
-        yield _sse(
-            "run.completed",
-            {
-                "run_id": run_id,
-                "output": result.output,
-                "usage": _usage(result.usage).model_dump(),
-            },
-        )
-    except Exception as exc:
-        latency_ms = int((time.perf_counter() - started) * 1000)
-        error = str(exc) or type(exc).__name__
-        await _record_failure(runs, run_id, error, latency_ms)
-        finished = True
-        yield _sse(
-            "run.failed",
-            {"run_id": run_id, "code": "run_failed", "detail": error},
-        )
-    finally:
-        if not finished:
-            # The consumer went away before the run completed. Do not leave a
-            # row stuck at running.
-            latency_ms = int((time.perf_counter() - started) * 1000)
-            await _record_failure(runs, run_id, "client disconnected", latency_ms)
+            tracing.finish_span(
+                span,
+                latency_ms=_elapsed_ms(started),
+                **{
+                    tracing.STATUS: "ok",
+                    tracing.OUTPUT: result.output,
+                    **_usage_attributes(result.usage),
+                },
+            )
+            # End and export before telling the client the run finished, so a
+            # caller that reads it straight after the last event finds it.
+            span.end()
+            tracing.flush()
+            finished = True
+            yield _sse(
+                "run.completed",
+                {
+                    "run_id": run_id,
+                    "output": result.output,
+                    "usage": _usage(result.usage).model_dump(),
+                },
+            )
+        except Exception as exc:
+            error = str(exc) or type(exc).__name__
+            tracing.finish_span(
+                span,
+                latency_ms=_elapsed_ms(started),
+                **{tracing.STATUS: "failed", tracing.ERROR: error},
+            )
+            span.end()
+            tracing.flush()
+            finished = True
+            yield _sse("run.failed", {"run_id": run_id, "code": "run_failed", "detail": error})
+        finally:
+            if not finished:
+                # The consumer went away before the run completed. The span is
+                # all the record there is, so say what happened on it.
+                tracing.finish_span(
+                    span,
+                    latency_ms=_elapsed_ms(started),
+                    **{tracing.STATUS: "failed", tracing.ERROR: "client disconnected"},
+                )
 
 
 @router.post("/{name}/runs/stream")
@@ -251,20 +255,12 @@ async def stream_agent(name: str, body: RunRequest, request: Request) -> Streami
         ) from None
 
     run_id = uuid4().hex
-    runs = _runs(request)
-    await runs.create_running(
-        run_id,
-        agent=name,
-        manifest_digest=loaded.digest,
-        input=body.input,
-    )
     return StreamingResponse(
         _stream_run(
             loaded=loaded,
             name=name,
             prompt=body.input,
             run_id=run_id,
-            runs=runs,
             limits=_limits(_settings(request)),
         ),
         media_type="text/event-stream",

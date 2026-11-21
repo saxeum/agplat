@@ -2,6 +2,10 @@
 
 Status: **implemented** · 2026-11-21 · commit `79d6659` · Pydantic AI `2.71.0` · Postgres `17`
 
+> Amended after the fact: this is the record of `79d6659`, when a run was a row in Postgres and the
+> suite had a database lane. Runs are now spans in Phoenix, there is no database, and
+> `DESIGN.md` §14 states what that costs. The decisions below are otherwise as shipped.
+
 **TL;DR:** every run is a row written before the model is called and updated when it ends, over
 either a waiting endpoint or an SSE one. `GET /runs/{id}` reads the row and its usage back. Both
 ceilings a run has come from `AGPLAT_*` settings. Postgres arrives here, not in Step 2, because a run

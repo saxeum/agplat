@@ -1,4 +1,4 @@
-# Step 1: the API and Postgres. Only loopback is published: this
+# Step 1: the API and the trace store. Only loopback is published: this
 # service has no auth by design.
 name: agplat
 
@@ -12,11 +12,11 @@ services:
       - path: ${HOME}/.env
         required: false
     environment:
-      AGPLAT_DB_URL: postgresql://agplat:agplat@db:5432/agplat
+      AGPLAT_PHOENIX_URL: http://phoenix:6006
       PYTHONPATH: /app/src
     depends_on:
-      db:
-        condition: service_healthy
+      phoenix:
+        condition: service_started
     volumes:
       # Edit on the host, reload in the container. The image still works
       # without these mounts; they are a development convenience.
@@ -35,21 +35,18 @@ services:
       timeout: 3s
       retries: 3
 
-  db:
-    image: postgres:17
-    environment:
-      POSTGRES_USER: agplat
-      POSTGRES_PASSWORD: agplat
-      POSTGRES_DB: agplat
+  # Run records live here. Auth is off because the port is loopback-only and the
+  # alternative is a token to manage in a PoC; turn it on before exposing it.
+  phoenix:
+    # Pinned by digest, like every other build input here.
+    image: arizephoenix/phoenix@sha256:09ec48906c054a27dd09a88c8e6bcc24fe89649d3ecc94d3a8ed394e21279b31
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:6006:6006"
+    environment:
+      PHOENIX_ENABLE_AUTH: "false"
+      PHOENIX_WORKING_DIR: /phoenix
     volumes:
-      - db_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U agplat -d agplat"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+      - phoenix_data:/phoenix
 
 volumes:
-  db_data:
+  phoenix_data:

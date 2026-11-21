@@ -1,6 +1,6 @@
 # agplat — design
 
-**A local, REST-only, multi-agent knowledge platform. Postgres + Pydantic AI + Docker.**
+**A local, REST-only, multi-agent knowledge platform. FastAPI + Pydantic AI + Phoenix + Docker.**
 
 Status: Step 1 implemented · Date: 2026-11-21 · Target: a local checkout, local-only
 
@@ -51,15 +51,18 @@ policy and the HTTP contract**.
 ```
 ┌──────────── docker compose ─────────────────────────────┐
 │                                                         │
-│  api   FastAPI + agents       127.0.0.1:8000            │
-│  db    Postgres 17          127.0.0.1:5432              │
+│  api      FastAPI + agents       127.0.0.1:8000         │
+│  phoenix  trace store (runs)     127.0.0.1:6006         │
 │                                                         │
-│  volumes: ./data (uploads, derived files)               │
+│  volumes: phoenix_data, ./data (uploads, from Step 3)   │
 └─────────────────────────────────────────────────────────┘
 ```
 
-- **One Postgres** holds relational rows, vectors and full-text indexes. A dedicated vector database
-  is not justified at PoC scale and would be a second thing to learn.
+- **Phoenix holds the runs.** One span per run, everything the run did nested under it; its own
+  store, its own retention. It is optional: unset `AGPLAT_PHOENIX_URL` and runs still work.
+- **One Postgres, from Step 2**, holds the data agents query: relational rows, vectors and full-text
+  indexes. A dedicated vector database is not justified at PoC scale and would be a second thing to
+  learn.
 - **No queue.** Ingestion runs in a FastAPI `BackgroundTask` with a `jobs` row for status. This is
   honest for a single process; §17 says when it stops being honest.
 - **The model is per-agent.** The assistant spec names `deepseek:deepseek-flash`. Any Pydantic AI
@@ -68,7 +71,7 @@ policy and the HTTP contract**.
 - **No NAT, no TLS, no auth.** The API binds `127.0.0.1`. It is not safe to expose; this is stated in
   the README and §13.
 
-Step 0 needs neither Postgres nor a provider key: tests use `TestModel`, and `/health` needs no
+Step 0 needs neither a store nor a provider key: tests use `TestModel`, and `/health` needs no
 model.
 
 ---
@@ -80,9 +83,8 @@ src/agplat/
   main.py            create_app(): the composition root, nothing else
   settings.py        env-driven settings (AGPLAT_*)
   deps.py            RunDeps: what a tool may see about the current run
-  db.py              Postgres connection and forward-only migrations
-  migrate.py         python -m agplat.migrate
-  runs.py            run records: insert, finish, read
+  tracing.py         the tracer, the run span, and the attribute names
+  runs.py            reading runs back out of the trace store
   api/
     health.py        GET /health
     agents.py        GET /agents, POST /agents/{name}/runs, POST .../runs/stream
@@ -91,8 +93,7 @@ src/agplat/
   agents/
     registry.py      load native AgentSpecs once; digest each manifest
 agents/              one YAML per agent (data, not code)
-migrations/          committed SQL, applied once each by agplat.migrate
-tests/               unit + HTTP tests; the `integration` ones need Postgres
+tests/               unit + HTTP tests; no model, no network, no store
 ```
 
 Rule: **routes do HTTP, agents do policy, tools do I/O, knowledge does retrieval.** A route never
@@ -102,7 +103,7 @@ As steps land, this grows by one module at a time:
 
 | Step | New module |
 | --- | --- |
-| 1 | `db.py`, `migrate.py`, `runs.py` (run records), `api/runs.py`, SSE in `api/agents.py` |
+| 1 | `tracing.py`, `runs.py` (read side), `api/runs.py`, SSE in `api/agents.py` |
 | 2 | `tools/sql.py` |
 | 3 | `knowledge/ingest.py`, `api/documents.py` |
 | 4 | `knowledge/embed.py`, `knowledge/search.py` |
@@ -121,10 +122,10 @@ Every run follows the same path, whether or not it streams:
 POST /agents/{name}/runs
   -> AgentRegistry.get(name)          404 if unknown
   -> enqueue nothing; run in-process
-  -> insert runs row (status=running)
+  -> mint run_id; start the run span (status=running)
   -> agent.run(input, deps=RunDeps(...), usage_limits=...)
        -> tools may read docs, SQL, or delegate to another agent
-  -> update runs row (status=ok|failed, tokens, cost, latency)
+  -> finish the span (status=ok|failed, tokens, cost, latency), export it
   -> 200 {run_id, output, usage}
 ```
 
@@ -177,7 +178,7 @@ Consequences, stated rather than discovered:
   function tools are still passed to `Agent.from_spec()` by platform code;
 - `AgentRegistry.load()` is the only construction site. It sets `deps_type=RunDeps`, requires a
   `model` in every spec, and passes a test-only override when one is supplied;
-- the manifest's SHA-256 is stored on the registry entry and, from Step 1, on every run row. The file
+- the manifest's SHA-256 is stored on the registry entry and, from Step 1, on every run span. The file
   *is* the version, and the digest pins it.
 
 Manifests are read **once at startup**. Editing one requires a restart; `--reload` does that in dev.
@@ -365,17 +366,18 @@ error on the first insert.
 
 ## 9. Database access for agents
 
-**Migrations are committed SQL.** Files under `migrations/` are applied in filename order by
-`uv run python -m agplat.migrate` (`make db-migrate`). The runner records each applied filename in
-`schema_migrations` and wraps the file plus its record in one transaction. No Alembic: the schema is
-small and the runner is small enough to read. The first migration arrives with the `runs` table.
+**There is no database in Step 1.** Run records are spans (§14), and nothing else needed storing.
+The database arrives in Step 2, as a **data source for agents** rather than a place to keep run
+records, and with it: committed SQL migrations applied in filename order by
+`uv run python -m agplat.migrate`, recorded in `schema_migrations`, one transaction per file. No
+Alembic: the schema is small and the runner is small enough to read.
 
 The requirement "DB access" means **the agent can query data**, not "the agent can run SQL against
 the platform's own tables". Those are separated:
 
-- `agplat` owns the schema and runs migrations.
-- `agplat_ro` is a login role with `SELECT` on an allowlisted set of views only. It has no access to
-  `documents`, `chunks`, `jobs` or `runs`.
+- `agplat` owns the data schema and runs migrations.
+- `agplat_ro` is a login role with `SELECT` on an allowlisted set of views only. It cannot see the
+  ingestion tables.
 - `sql_query` opens a connection **as `agplat_ro`**, not as the app role.
 
 Guard, in order:
@@ -473,8 +475,10 @@ Every knob is an `AGPLAT_*` environment variable; defaults work locally.
 | Variable | Default | Used by |
 | --- | --- | --- |
 | `AGPLAT_AGENTS_DIR` | `agents` | registry |
-| `AGPLAT_DB_URL` | `postgresql://agplat:agplat@127.0.0.1:5432/agplat` | storage; compose sets `@db` |
-| `AGPLAT_DB_RO_URL` | `postgresql://agplat_ro:...` | `sql_query` |
+| `AGPLAT_PHOENIX_URL` | unset | run records; unset means nothing is stored |
+| `AGPLAT_PHOENIX_PROJECT` | `default` | the Phoenix project runs are read from |
+| `AGPLAT_PHOENIX_API_KEY` | unset | sent as a bearer token when the store has auth on |
+| `AGPLAT_SERVICE_NAME` | `agplat` | the OTel resource `service.name` |
 | `AGPLAT_DATA_DIR` | `/data` | uploads |
 | `AGPLAT_MAX_UPLOAD_BYTES` | `26214400` (25 MiB) | upload |
 | `AGPLAT_EMBED_MODEL` | `sentence-transformers:google/embeddinggemma-300m` | ingest, search |
@@ -520,18 +524,28 @@ Each is a real production concern and none is needed for a laptop PoC. §17 has 
 
 ## 14. Observability and evaluation
 
-**Run rows, not log archaeology.** Every run writes: `id`, `parent_id`, `agent`, `manifest_digest`,
-`input`, `output`, `status`, `error`, `input_tokens`, `output_tokens`, `requests`, `cost`,
-`latency_ms`, `created_at`. `GET /runs/{id}` returns the row plus children. This is enough to answer
-"what happened" without an observability stack.
+**Runs are spans, and the trace store is the record.** Every run is one span named `run` carrying
+`agplat.*` attributes: `run_id`, `agent`, `manifest_digest`, `input`, `output`, `status`, `error`,
+`input_tokens`, `output_tokens`, `requests`, `cost`, `latency_ms`. Model and tool calls are its
+children, so one trace is one run and everything it did, and `GET /runs/{id}` reads the span back by
+attribute. Phoenix is the store (`AGPLAT_PHOENIX_URL`); unset means nothing is stored and that one
+endpoint answers `503 tracing_disabled`.
 
-`cost` is `numeric` and is handled as `Decimal`, so it round-trips exactly; the API serialises it as a
-string because JSON has no `Decimal`.
+What that buys: prompts, completions, tool arguments and the tree come for free, with a UI, datasets
+and evaluators attached. What it costs, measured rather than assumed:
 
-**Logs** are JSON lines with `run_id` and `job_id`, to stdout. Docker collects them.
+- **No acknowledged write.** A span is exported when it ends, by a batch exporter. A process killed
+  1.5 s into a run left the span count in the store unchanged: the run happened and left nothing.
+- **A store failure is silent.** The exporter logs and drops. Wiring this up, Phoenix answered `401`
+  and three spans vanished while the run still printed `output: ready`.
+- **Read-after-write is not instant.** Phoenix acks the span, then writes it: 60-110 ms measured, so
+  the read path retries three times before it calls a run unknown.
 
-**Traces** are optional: Pydantic AI emits OpenTelemetry spans, and setting `OTEL_EXPORTER_OTLP_*`
-sends them anywhere. The PoC does not require a collector; adding one is configuration, not code.
+`cost` is a string attribute parsed back into `Decimal`, so the API serialises it exactly as before;
+JSON still has no `Decimal`.
+
+**Logs** are JSON lines with `run_id`, to stdout. Docker collects them. They are narration, not the
+record: nothing in the request path writes one.
 
 **Evals** start at Step 5, with `pydantic-evals`:
 
@@ -547,7 +561,7 @@ Ingestion has ordinary unit tests: chunk boundaries, OCR fallback, idempotency, 
 ## 15. Docker
 
 ```yaml
-# compose.yaml (Step 0; Step 1 adds the db service)
+# compose.yaml (Step 0; Step 1 adds the phoenix service)
 services:
   api:
     build: .
@@ -561,13 +575,14 @@ services:
     command: uvicorn agplat.main:create_app --factory --host 0.0.0.0 --port 8000 --reload
 ```
 
-Step 1 added `db` (`postgres:17`) with a healthcheck and `depends_on: condition:
-service_healthy`. Step 8 adds `--profile mcp`. The image is
+Step 1 added `phoenix` (`arizephoenix/phoenix`) with its own volume, auth off because the
+port is loopback-only, and `depends_on: condition: service_started` so the API does not wait on a
+store it can live without. Step 8 adds `--profile mcp`. The image is
 non-root, installs with `uv sync --frozen`, and has no build toolchain at runtime.
 
-**Why the app is in Docker from Step 0 but Postgres is not:** the API is the deliverable and the
-interface; the database is a dependency that arrives when it has something to store. One new service
-per step keeps the diff readable.
+**Why the app is in Docker from Step 0 but a store is not:** the API is the deliverable and the
+interface; the store arrives when it has something to store — in Step 1 that is the trace store, and
+in Step 2 a database of documents. One new service per step keeps the diff readable.
 
 ---
 
@@ -579,20 +594,20 @@ until the previous one's exit test passes.
 | Step | Deliverable | Read first | Exit test |
 | --- | --- | --- | --- |
 | **0 ✅** | skeleton, native `AgentSpec` loader, `GET /agents`, `POST /agents/{name}/runs`, tests | Pydantic AI *Agents* (`Agent`, `run`), *Agent Specs* (`AgentSpec`), *Testing* (`TestModel`) | `make test` passes; a run returns text with a model configured |
-| **1 ✅** | Postgres + migrations, run rows, streaming SSE, usage limits, `GET /runs/{id}` | *Agents* streaming (`run_stream_events`), *Usage limits*, Postgres image | a stream yields deltas; `GET /runs/{id}` returns the row and its usage |
+| **1 ✅** | runs as spans in Phoenix, streaming SSE, usage limits, `GET /runs/{id}` | *Agents* streaming (`run_stream_events`), *Usage limits*, OTLP/Phoenix docs | a stream yields deltas; `GET /runs/{id}` returns the row and its usage |
 | 2 | read-only role, `sql_query`, allowlisted views | *Tools*, asyncpg docs | a natural-language question returns rows; `drop table` is refused |
 | 3 | `POST /documents`, extraction, chunking, jobs, list/delete | Pydantic AI *Tools* (for later), PyMuPDF docs | upload a text PDF; `ready`; chunks count > 0; re-upload returns same id |
 | 4 | embeddings, pgvector, hybrid `/search` | *Embeddings*, pgvector README | a paraphrase query finds the right chunk; a keyword query finds an exact code |
 | 5 | `search_docs` + `read_document` tools, citations, `evals/rag.yaml` | *Tools*, `pydantic-evals` quick start | answer cites the right page; eval hit@k passes |
 | 6 | OCR fallback for scans/images | PyMuPDF pixmap, Tesseract CLI | a scanned fixture produces chunks with `method=ocr` |
-| 7 | `delegate` tool, depth cap, child run rows | *Multi-agent applications* (delegation) | supervisor delegates; `GET /runs/{id}` shows two children |
+| 7 | `delegate` tool, depth cap, child run spans | *Multi-agent applications* (delegation) | supervisor delegates; `GET /runs/{id}` shows two children |
 | 8 | MCP server (FastMCP) + MCP client config | *MCP server*, *MCP client* | an external MCP client calls `search_docs`; one configured server appears as a tool |
 | 9 | compose hardening, healthchecks, Makefile, README, final demo script | Docker docs | `docker compose up` from clean checkout runs the demo end to end |
 
-Current status: **Step 1 complete**, recorded in [docs/stage-1.md](docs/stage-1.md). Step 2 is the next
-diff: a read-only Postgres role, `sql_query` and allowlisted views, so the first tool arrives with the
-first thing it is safe to read. The database arrived in Step 1 rather than Step 2 because a run record
-is a row: writing it to a dict first would be work thrown away.
+Current status: **Step 1 complete**, recorded in [docs/stage-1.md](docs/stage-1.md) and amended since:
+run records are spans in Phoenix, not rows in Postgres. Step 2 is the next diff: Postgres as a **data
+source**, a read-only role, `sql_query` and allowlisted views, so the first tool arrives with the first
+thing it is safe to read.
 
 ---
 
@@ -612,6 +627,7 @@ is a row: writing it to a dict first would be work thrown away.
 | Write-capable tools | a real workflow needs them, and approvals exist |
 | Sandboxed code execution | an agent must run generated code |
 | Graph workflows | a fixed, branching process replaces free delegation |
+| Durable run records (an acknowledged append, and a record of runs that never finished) | a lost run costs money, or a caller needs evidence of a run that died |
 | Cloud deployment | the laptop is no longer the target |
 
 ---
@@ -620,6 +636,7 @@ is a row: writing it to a dict first would be work thrown away.
 
 | Choice | What we gain | What we pay |
 | --- | --- | --- |
+| Runs as spans in Phoenix | prompts, tokens, tool calls and the trace tree for free; one service less | no acknowledged write: a crash leaves no record, and a store outage loses records silently |
 | One Postgres for rows + vectors + FTS | one service, one backup, one thing to learn | HNSW tuning is manual; not a specialised vector DB |
 | Character chunking | deterministic, dependency-free, easy to test | uneven chunks; no semantic boundaries |
 | Hybrid RRF without reranking | no score calibration; robust to vocabulary mismatch | less precise top-1 than a reranker |

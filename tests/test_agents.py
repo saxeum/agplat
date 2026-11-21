@@ -1,17 +1,18 @@
-"""The HTTP contract, exercised without a model or a database."""
+"""The HTTP contract, exercised without a model, a database or a network."""
 
 from dataclasses import replace
 from typing import Any, cast
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic_ai.models.test import TestModel
 
+from agplat import tracing
 from agplat.agents.registry import AgentRegistry
 from agplat.main import create_app
 from agplat.settings import Settings
-from tests.conftest import AGENTS_DIR, tool_calling_agent
-from tests.fakes import FakeRunStore
+from tests.conftest import AGENTS_DIR, run_attributes, tool_calling_agent
 
 
 class FailingAgent:
@@ -53,7 +54,7 @@ def test_unknown_agent_is_404(client: TestClient) -> None:
     }
 
 
-def test_a_run_returns_text_and_usage(client: TestClient, runs: FakeRunStore) -> None:
+def test_a_run_returns_text_and_usage(client: TestClient, spans: InMemorySpanExporter) -> None:
     response = client.post("/agents/assistant/runs", json={"input": "say hi"})
 
     assert response.status_code == 200
@@ -63,25 +64,24 @@ def test_a_run_returns_text_and_usage(client: TestClient, runs: FakeRunStore) ->
     assert body["output"]
     assert body["usage"]["requests"] >= 1
 
-    digest = client.get("/agents/assistant").json()["digest"]
-    assert runs.created == [
-        {
-            "run_id": body["run_id"],
-            "agent": "assistant",
-            "manifest_digest": digest,
-            "input": "say hi",
-            "parent_id": None,
-        }
-    ]
-    assert len(runs.ok) == 1
-    ok = runs.ok[0]
-    assert ok["run_id"] == body["run_id"]
-    assert ok["output"] == body["output"]
-    assert ok["requests"] == body["usage"]["requests"]
-    assert isinstance(ok["latency_ms"], int)
+
+def test_a_successful_run_span_carries_the_record(
+    client: TestClient, spans: InMemorySpanExporter
+) -> None:
+    body = client.post("/agents/assistant/runs", json={"input": "say hi"}).json()
+
+    attrs = run_attributes(spans, body["run_id"])
+
+    assert attrs[tracing.STATUS] == "ok"
+    assert attrs[tracing.AGENT] == "assistant"
+    assert attrs[tracing.INPUT] == "say hi"
+    assert attrs[tracing.OUTPUT] == body["output"]
+    assert attrs[tracing.REQUESTS] == body["usage"]["requests"]
+    assert attrs[tracing.DIGEST] == client.get("/agents/assistant").json()["digest"]
+    assert isinstance(attrs[tracing.LATENCY_MS], int)
 
 
-def test_a_failed_run_is_recorded(client: TestClient, runs: FakeRunStore) -> None:
+def test_a_failed_run_span_says_why(client: TestClient, spans: InMemorySpanExporter) -> None:
     app = cast(FastAPI, client.app)
     loaded = app.state.registry.get("assistant")
     app.state.registry.agents["assistant"] = replace(
@@ -97,12 +97,10 @@ def test_a_failed_run_is_recorded(client: TestClient, runs: FakeRunStore) -> Non
     assert body["detail"] == "boom"
     assert body["run_id"]
 
-    assert len(runs.created) == 1
-    assert len(runs.failed) == 1
-    assert runs.failed[0]["run_id"] == body["run_id"]
-    assert runs.failed[0]["error"] == "boom"
-    assert isinstance(runs.failed[0]["latency_ms"], int)
-    assert runs.ok == []
+    attrs = run_attributes(spans, body["run_id"])
+    assert attrs[tracing.STATUS] == "failed"
+    assert attrs[tracing.ERROR] == "boom"
+    assert isinstance(attrs[tracing.LATENCY_MS], int)
 
 
 def test_request_limit_defaults_to_four(monkeypatch) -> None:
@@ -111,12 +109,10 @@ def test_request_limit_defaults_to_four(monkeypatch) -> None:
     assert Settings().request_limit == 4
 
 
-def test_request_limit_comes_from_the_environment(
-    monkeypatch, runs: FakeRunStore
-) -> None:
+def test_request_limit_comes_from_the_environment(monkeypatch, spans: InMemorySpanExporter) -> None:
     monkeypatch.setenv("AGPLAT_REQUEST_LIMIT", "1")
     registry = AgentRegistry.load(AGENTS_DIR, model=TestModel())
-    app = create_app(settings=Settings(), registry=registry, runs=runs)
+    app = create_app(settings=Settings(), registry=registry)
     app.state.registry.agents["assistant"] = replace(
         registry.get("assistant"),
         agent=tool_calling_agent(),
@@ -129,7 +125,10 @@ def test_request_limit_comes_from_the_environment(
     body = response.json()
     assert body["code"] == "run_failed"
     assert "request_limit of 1" in body["detail"]
-    assert runs.failed[0]["error"] == body["detail"]
+
+    attrs = run_attributes(spans, body["run_id"])
+    assert attrs[tracing.STATUS] == "failed"
+    assert attrs[tracing.ERROR] == body["detail"]
 
 
 def test_empty_input_is_rejected(client: TestClient) -> None:
@@ -138,26 +137,8 @@ def test_empty_input_is_rejected(client: TestClient) -> None:
     assert response.status_code == 422
 
 
-def test_a_run_failure_survives_a_record_failure(
-    client: TestClient,
-    runs: FakeRunStore,
-    monkeypatch,
-    caplog,
-) -> None:
-    app = cast(FastAPI, client.app)
-    loaded = app.state.registry.get("assistant")
-    app.state.registry.agents["assistant"] = replace(
-        loaded,
-        agent=cast(Any, FailingAgent()),
-    )
+def test_health_probes_are_not_traced(client: TestClient, spans: InMemorySpanExporter) -> None:
+    for _ in range(3):
+        client.get("/health")
 
-    async def broken_finish(*args: object, **kwargs: object) -> None:
-        raise RuntimeError("database down")
-
-    monkeypatch.setattr(runs, "finish_failed", broken_finish)
-
-    response = client.post("/agents/assistant/runs", json={"input": "fail"})
-
-    assert response.status_code == 500
-    assert response.json()["code"] == "run_failed"
-    assert "could not record failed run" in caplog.text
+    assert [s.name for s in spans.get_finished_spans()] == []

@@ -1,7 +1,5 @@
 .DEFAULT_GOAL := help
 
-INTEGRATION_DB_URL ?= postgresql://agplat:agplat@127.0.0.1:5432/agplat_test
-
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-8s\033[0m %s\n", $$1, $$2}'
@@ -18,20 +16,11 @@ logs: ## Follow API logs
 api: ## Run the API on the host with reload (faster than rebuilding)
 	uv run uvicorn agplat.main:create_app --factory --reload --host 127.0.0.1 --port 8000
 
-db-migrate: ## Apply SQL migrations to AGPLAT_DB_URL
-	uv run python -m agplat.migrate
-
-test: ## Unit and HTTP tests: no model, no network, no database
+test: ## Unit and HTTP tests: no model, no network, no trace store
 	uv run pytest -q
 
 test-all: ## Run all tests with coverage (fails under the configured floor)
 	uv run pytest --cov=agplat --cov-report=term-missing
-
-test-integration: ## Run DB integration tests against compose Postgres
-	docker compose up -d --wait db
-	@docker compose exec -T db psql -U agplat -d agplat -tAc "select 1 from pg_database where datname='agplat_test'" | grep -q 1 || docker compose exec -T db createdb -U agplat agplat_test
-	AGPLAT_DB_URL=$(INTEGRATION_DB_URL) uv run python -m agplat.migrate
-	AGPLAT_TEST_DB_URL=$(INTEGRATION_DB_URL) uv run pytest -m integration -q
 
 docker-smoke: ## Build the image and smoke-test it without bind mounts
 	./scripts/docker-smoke.sh

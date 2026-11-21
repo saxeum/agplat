@@ -27,7 +27,7 @@ class RunResponse(BaseModel):
 
 
 class RunInfo(BaseModel):
-    """A persisted run, with its children."""
+    """One stored run, with its children."""
 
     run_id: str
     parent_id: str | None

@@ -1,4 +1,4 @@
-"""The SSE endpoint and its run-row lifecycle."""
+"""The SSE endpoint and the run span it leaves behind."""
 
 import asyncio
 import json
@@ -8,18 +8,18 @@ from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, cast
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic_ai import PartDeltaEvent, TextPartDelta
 from pydantic_ai.models.test import TestModel
 
+from agplat import tracing
 from agplat.agents.registry import AgentRegistry
-from agplat.api.agents import _limits, _record_failure, _stream_run
+from agplat.api.agents import _limits, _stream_run
 from agplat.main import create_app
 from agplat.settings import Settings
-from tests.conftest import AGENTS_DIR, tool_calling_agent
-from tests.fakes import FakeRunStore
+from tests.conftest import AGENTS_DIR, run_attributes, tool_calling_agent
 
 
 class FailingStreamingAgent:
@@ -48,11 +48,6 @@ class EmptyDeltaStreamingAgent:
         yield events()
 
 
-class CancelledFinishStore(FakeRunStore):
-    async def finish_failed(self, run_id: str, *, error: str, latency_ms: int) -> None:
-        raise asyncio.CancelledError
-
-
 def parse_sse(body: str) -> list[tuple[str, dict[str, Any]]]:
     events: list[tuple[str, dict[str, Any]]] = []
     for block in body.strip().split("\n\n"):
@@ -64,7 +59,9 @@ def parse_sse(body: str) -> list[tuple[str, dict[str, Any]]]:
     return events
 
 
-def test_stream_emits_deltas_and_persists(client: TestClient, runs: FakeRunStore) -> None:
+def test_stream_emits_deltas_and_records_the_run(
+    client: TestClient, spans: InMemorySpanExporter
+) -> None:
     with client.stream(
         "POST",
         "/agents/assistant/runs/stream",
@@ -85,10 +82,12 @@ def test_stream_emits_deltas_and_persists(client: TestClient, runs: FakeRunStore
     assert completed["output"]
     assert completed["usage"]["requests"] >= 1
 
-    assert runs.ok[0]["run_id"] == completed["run_id"]
+    attrs = run_attributes(spans, completed["run_id"])
+    assert attrs[tracing.STATUS] == "ok"
+    assert attrs[tracing.OUTPUT] == completed["output"]
 
 
-def test_stream_failure_emits_run_failed(client: TestClient, runs: FakeRunStore) -> None:
+def test_stream_failure_emits_run_failed(client: TestClient, spans: InMemorySpanExporter) -> None:
     app = cast(FastAPI, client.app)
     loaded = app.state.registry.get("assistant")
     app.state.registry.agents["assistant"] = replace(
@@ -108,25 +107,29 @@ def test_stream_failure_emits_run_failed(client: TestClient, runs: FakeRunStore)
     failed = dict(events)["run.failed"]
     assert failed["code"] == "run_failed"
     assert failed["detail"] == "boom"
-    assert runs.failed[0]["run_id"] == failed["run_id"]
+
+    attrs = run_attributes(spans, failed["run_id"])
+    assert attrs[tracing.STATUS] == "failed"
+    assert attrs[tracing.ERROR] == "boom"
 
 
-def test_stream_honours_the_request_limit(
-    monkeypatch, runs: FakeRunStore
-) -> None:
+def test_stream_honours_the_request_limit(monkeypatch, spans: InMemorySpanExporter) -> None:
     monkeypatch.setenv("AGPLAT_REQUEST_LIMIT", "1")
     registry = AgentRegistry.load(AGENTS_DIR, model=TestModel())
-    app = create_app(settings=Settings(), registry=registry, runs=runs)
+    app = create_app(settings=Settings(), registry=registry)
     app.state.registry.agents["assistant"] = replace(
         registry.get("assistant"),
         agent=tool_calling_agent(),
     )
 
-    with TestClient(app) as client, client.stream(
-        "POST",
-        "/agents/assistant/runs/stream",
-        json={"input": "go"},
-    ) as response:
+    with (
+        TestClient(app) as client,
+        client.stream(
+            "POST",
+            "/agents/assistant/runs/stream",
+            json={"input": "go"},
+        ) as response,
+    ):
         body = "".join(response.iter_text())
 
     events = parse_sse(body)
@@ -137,7 +140,7 @@ def test_stream_honours_the_request_limit(
 
     failed = dict(events)["run.failed"]
     assert "request_limit of 1" in failed["detail"]
-    assert runs.failed[0]["error"] == failed["detail"]
+    assert run_attributes(spans, failed["run_id"])[tracing.ERROR] == failed["detail"]
 
 
 def test_stream_unknown_agent_is_404(client: TestClient) -> None:
@@ -151,68 +154,47 @@ def test_stream_unknown_agent_is_404(client: TestClient) -> None:
     }
 
 
-def test_disconnect_marks_the_run_failed() -> None:
+def test_disconnect_records_the_run_as_failed(spans: InMemorySpanExporter) -> None:
     async def scenario() -> None:
-        store = FakeRunStore()
         run_id = "disconnect-1"
-        await store.create_running(
-            run_id,
-            agent="assistant",
-            manifest_digest="digest",
-            input="hi",
-        )
-        loaded = cast(Any, SimpleNamespace(agent=SlowStreamingAgent()))
+        loaded = cast(Any, SimpleNamespace(agent=SlowStreamingAgent(), digest="digest"))
 
         stream = _stream_run(
             loaded=loaded,
             name="assistant",
             prompt="hi",
             run_id=run_id,
-            runs=store,
             limits=_limits(Settings()),
         )
         assert (await stream.__anext__()).startswith("event: run.started")
         assert (await stream.__anext__()).startswith("event: output.delta")
         await stream.aclose()
 
-        assert store.failed[0]["run_id"] == run_id
-        assert store.failed[0]["error"] == "client disconnected"
+        attrs = run_attributes(spans, run_id)
+        assert attrs[tracing.STATUS] == "failed"
+        assert attrs[tracing.ERROR] == "client disconnected"
 
     asyncio.run(scenario())
 
 
-def test_stream_without_a_result_fails_cleanly() -> None:
+def test_stream_without_a_result_fails_cleanly(spans: InMemorySpanExporter) -> None:
     async def scenario() -> None:
-        store = FakeRunStore()
         run_id = "empty-1"
-        await store.create_running(
-            run_id,
-            agent="assistant",
-            manifest_digest="digest",
-            input="hi",
-        )
-        loaded = cast(Any, SimpleNamespace(agent=EmptyDeltaStreamingAgent()))
+        loaded = cast(Any, SimpleNamespace(agent=EmptyDeltaStreamingAgent(), digest="digest"))
 
         stream = _stream_run(
             loaded=loaded,
             name="assistant",
             prompt="hi",
             run_id=run_id,
-            runs=store,
             limits=_limits(Settings()),
         )
         chunks = [chunk async for chunk in stream]
 
         names = [parse_sse(chunk)[0][0] for chunk in chunks]
         assert names == ["run.started", "run.failed"]
-        assert store.failed[0]["run_id"] == run_id
-
-    asyncio.run(scenario())
-
-
-def test_record_failure_propagates_cancellation() -> None:
-    async def scenario() -> None:
-        with pytest.raises(asyncio.CancelledError):
-            await _record_failure(CancelledFinishStore(), "run-1", "boom", 1)
+        attrs = run_attributes(spans, run_id)
+        assert attrs[tracing.STATUS] == "failed"
+        assert "without a result" in str(attrs[tracing.ERROR])
 
     asyncio.run(scenario())
