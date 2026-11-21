@@ -27,8 +27,9 @@ class Settings(BaseSettings):
     # Where the *.yaml agent manifests live, relative to the working directory.
     agents_dir: Path = Path("agents")
 
-    # A per-run ceiling on tool calls, so a model that loops stops instead of
-    # spending. This is a run limit, not a daily budget; see DESIGN.md §7.
+    # Per-run ceilings, so a model that loops stops instead of spending. These
+    # are run limits, not a daily budget; see DESIGN.md §7 and §12.
+    request_limit: int = 4
     max_tool_calls: int = 12
 
 

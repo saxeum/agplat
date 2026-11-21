@@ -6,9 +6,11 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
 from agplat.agents.registry import AgentRegistry
+from agplat.deps import RunDeps
 from agplat.main import create_app
 from tests.fakes import FakeRunStore
 
@@ -26,6 +28,19 @@ def db_url() -> str:
 @pytest.fixture
 def runs() -> FakeRunStore:
     return FakeRunStore()
+
+
+def tool_calling_agent() -> Agent[RunDeps, str]:
+    """An agent whose turn costs two model requests, so ``request_limit=1`` bites."""
+    agent: Agent[RunDeps, str] = Agent(
+        TestModel(), deps_type=RunDeps, instructions="call the tool"
+    )
+
+    @agent.tool_plain
+    def ping() -> str:
+        return "pong"
+
+    return agent
 
 
 @pytest.fixture

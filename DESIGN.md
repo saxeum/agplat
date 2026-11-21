@@ -480,6 +480,7 @@ Every knob is an `AGPLAT_*` environment variable; defaults work locally.
 | `AGPLAT_EMBED_DIM` | `768` | schema check |
 | `AGPLAT_OCR_MIN_CHARS` | `40` | extraction |
 | `AGPLAT_MAX_DEPTH` | `2` | delegation |
+| `AGPLAT_REQUEST_LIMIT` | `4` | per run |
 | `AGPLAT_MAX_TOOL_CALLS` | `12` | per run |
 
 A spec's model is a **string**, not a secret. Provider keys are read from `~/.env` at startup (or
