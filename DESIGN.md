@@ -2,7 +2,7 @@
 
 **A local, REST-only, multi-agent knowledge platform. Postgres + Pydantic AI + Docker.**
 
-Status: Step 0 implemented · Date: 2026-11-21 · Target: a local checkout, local-only
+Status: Step 1 implemented · Date: 2026-11-21 · Target: a local checkout, local-only
 
 ---
 
@@ -85,13 +85,14 @@ src/agplat/
   runs.py            run records: insert, finish, read
   api/
     health.py        GET /health
-    agents.py        GET /agents, POST /agents/{name}/runs
+    agents.py        GET /agents, POST /agents/{name}/runs, POST .../runs/stream
+    runs.py          GET /runs/{id}
     schemas.py       request/response models
   agents/
     registry.py      load native AgentSpecs once; digest each manifest
 agents/              one YAML per agent (data, not code)
 migrations/          committed SQL, applied once each by agplat.migrate
-tests/               unit + HTTP tests, no model and no database
+tests/               unit + HTTP tests; the `integration` ones need Postgres
 ```
 
 Rule: **routes do HTTP, agents do policy, tools do I/O, knowledge does retrieval.** A route never
@@ -101,7 +102,7 @@ As steps land, this grows by one module at a time:
 
 | Step | New module |
 | --- | --- |
-| 1 | `db.py`, `migrate.py`, `runs.py` (run records), SSE in `api/agents.py` |
+| 1 | `db.py`, `migrate.py`, `runs.py` (run records), `api/runs.py`, SSE in `api/agents.py` |
 | 2 | `tools/sql.py` |
 | 3 | `knowledge/ingest.py`, `api/documents.py` |
 | 4 | `knowledge/embed.py`, `knowledge/search.py` |
@@ -546,7 +547,7 @@ Ingestion has ordinary unit tests: chunk boundaries, OCR fallback, idempotency, 
 ## 15. Docker
 
 ```yaml
-# compose.yaml (Step 0)
+# compose.yaml (Step 0; Step 1 adds the db service)
 services:
   api:
     build: .
@@ -560,7 +561,7 @@ services:
     command: uvicorn agplat.main:create_app --factory --host 0.0.0.0 --port 8000 --reload
 ```
 
-Step 1 adds `db` (`postgres:17`) with a healthcheck and `depends_on: condition:
+Step 1 added `db` (`postgres:17`) with a healthcheck and `depends_on: condition:
 service_healthy`. Step 8 adds `--profile mcp`. The image is
 non-root, installs with `uv sync --frozen`, and has no build toolchain at runtime.
 
@@ -578,7 +579,7 @@ until the previous one's exit test passes.
 | Step | Deliverable | Read first | Exit test |
 | --- | --- | --- | --- |
 | **0 ✅** | skeleton, native `AgentSpec` loader, `GET /agents`, `POST /agents/{name}/runs`, tests | Pydantic AI *Agents* (`Agent`, `run`), *Agent Specs* (`AgentSpec`), *Testing* (`TestModel`) | `make test` passes; a run returns text with a model configured |
-| 1 | Postgres + migrations, run rows, streaming SSE, usage limits, `GET /runs/{id}` | *Agents* streaming (`run_stream_events`), *Usage limits*, Postgres image | a stream yields deltas; `GET /runs/{id}` returns the row and its usage |
+| **1 ✅** | Postgres + migrations, run rows, streaming SSE, usage limits, `GET /runs/{id}` | *Agents* streaming (`run_stream_events`), *Usage limits*, Postgres image | a stream yields deltas; `GET /runs/{id}` returns the row and its usage |
 | 2 | read-only role, `sql_query`, allowlisted views | *Tools*, asyncpg docs | a natural-language question returns rows; `drop table` is refused |
 | 3 | `POST /documents`, extraction, chunking, jobs, list/delete | Pydantic AI *Tools* (for later), PyMuPDF docs | upload a text PDF; `ready`; chunks count > 0; re-upload returns same id |
 | 4 | embeddings, pgvector, hybrid `/search` | *Embeddings*, pgvector README | a paraphrase query finds the right chunk; a keyword query finds an exact code |
@@ -588,8 +589,10 @@ until the previous one's exit test passes.
 | 8 | MCP server (FastMCP) + MCP client config | *MCP server*, *MCP client* | an external MCP client calls `search_docs`; one configured server appears as a tool |
 | 9 | compose hardening, healthchecks, Makefile, README, final demo script | Docker docs | `docker compose up` from clean checkout runs the demo end to end |
 
-Current status: **Step 0 complete.** Step 1 is the next diff. Postgres arrives there, not in Step 2,
-because a run record is a database row: writing it to a dict first would be work thrown away.
+Current status: **Step 1 complete**, recorded in [docs/stage-1.md](docs/stage-1.md). Step 2 is the next
+diff: a read-only Postgres role, `sql_query` and allowlisted views, so the first tool arrives with the
+first thing it is safe to read. The database arrived in Step 1 rather than Step 2 because a run record
+is a row: writing it to a dict first would be work thrown away.
 
 ---
 

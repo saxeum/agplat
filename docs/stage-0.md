@@ -2,6 +2,9 @@
 
 Status: **implemented** · 2026-11-21 · commit `d62fccb` · Pydantic AI `2.71.0`
 
+> This is the record of Step 0, sealed at the commit above. Gaps 2 and 3 below are closed by
+> [stage-1.md](stage-1.md): runs are stored, and both ceilings are `AGPLAT_*` settings.
+
 **TL;DR:** FastAPI loads native Pydantic AI `AgentSpec` YAML once at startup, builds one agent, and
 exposes discovery plus one run endpoint. No database, tools, streaming, auth or retrieval yet.
 
