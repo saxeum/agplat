@@ -1,5 +1,7 @@
 """Request and response shapes. This is the public JSON contract."""
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -22,6 +24,23 @@ class RunResponse(BaseModel):
     run_id: str
     output: str
     usage: Usage
+
+
+class RunInfo(BaseModel):
+    """A persisted run, with its children."""
+
+    run_id: str
+    parent_id: str | None
+    agent: str
+    manifest_digest: str
+    input: str
+    output: str | None
+    status: str
+    error: str | None
+    usage: Usage | None = None
+    latency_ms: int | None
+    created_at: datetime
+    children: list["RunInfo"] = Field(default_factory=list)
 
 
 class AgentInfo(BaseModel):

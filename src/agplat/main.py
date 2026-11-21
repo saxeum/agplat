@@ -39,6 +39,7 @@ def create_app(
     app.state.runs = runs
     app.include_router(api.health.router)
     app.include_router(api.agents.router)
+    app.include_router(api.runs.router)
     return app
 
 
