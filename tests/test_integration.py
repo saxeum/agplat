@@ -1,6 +1,7 @@
 """Integration tests: host pytest against the compose Postgres."""
 
 import asyncio
+import json
 from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
@@ -135,3 +136,36 @@ def test_route_persists_a_run(db_url: str) -> None:
     assert run.output == body["output"]
     assert run.manifest_digest == registry.get("assistant").digest
     assert run.requests == body["usage"]["requests"]
+
+
+def test_streaming_route_persists_a_run(db_url: str) -> None:
+    registry = AgentRegistry.load(AGENTS_DIR, model=TestModel())
+    app = create_app(
+        settings=Settings(db_url=db_url, agents_dir=AGENTS_DIR),
+        registry=registry,
+        runs=RunRepository(db_url),
+    )
+
+    with TestClient(app) as client, client.stream(
+        "POST",
+        "/agents/assistant/runs/stream",
+        json={"input": "hi"},
+    ) as response:
+        assert response.status_code == 200
+        body = "".join(response.iter_text())
+
+    completed = None
+    for block in body.split("\n\n"):
+        if "event: run.completed" in block:
+            data = next(line for line in block.splitlines() if line.startswith("data: "))
+            completed = json.loads(data.removeprefix("data: "))
+    assert completed is not None
+    run_id = completed["run_id"]
+
+    async def read() -> Run | None:
+        return await RunRepository(db_url).get(run_id)
+
+    run = asyncio.run(read())
+    assert run is not None
+    assert run.status == "ok"
+    assert run.requests == completed["usage"]["requests"]
