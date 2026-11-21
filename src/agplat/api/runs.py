@@ -1,15 +1,15 @@
-"""Read one persisted run. No model call happens here."""
+"""Read one stored run back out of the trace store. No model call happens here."""
 
 from fastapi import APIRouter, Request, status
 
 from agplat.api.errors import ApiError
 from agplat.api.schemas import RunInfo, Usage
-from agplat.runs import Run, RunStore
+from agplat.runs import PhoenixUnavailable, Run, RunStore
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
 
-def _runs(request: Request) -> RunStore:
+def _runs(request: Request) -> RunStore | None:
     return request.app.state.runs
 
 
@@ -40,14 +40,26 @@ def _info(run: Run, children: list[Run]) -> RunInfo:
 
 @router.get("/{run_id}", response_model=RunInfo)
 async def get_run(run_id: str, request: Request) -> RunInfo:
-    """Return the row and its direct children. Reading never calls a model."""
-    runs = _runs(request)
-    run = await runs.get(run_id)
-    if run is None:
+    """Return the stored run and its direct children. Reading never calls a model."""
+    store = _runs(request)
+    if store is None:
+        raise ApiError(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "tracing_disabled",
+            "AGPLAT_PHOENIX_URL is unset, so no run was stored",
+        )
+    try:
+        stored = await store.get(run_id)
+    except PhoenixUnavailable as exc:
+        raise ApiError(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "tracing_unavailable",
+            str(exc),
+        ) from exc
+    if stored is None:
         raise ApiError(
             status.HTTP_404_NOT_FOUND,
             "run_not_found",
             f"unknown run: {run_id}",
         )
-    children = await runs.list_children(run_id)
-    return _info(run, children)
+    return _info(stored.run, stored.children)

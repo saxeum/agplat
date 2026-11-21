@@ -21,9 +21,8 @@ COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen
 
-# The image must carry its own agents and migrations; compose mounts them only in dev.
+# The image must carry its own agents; compose mounts them only in dev.
 COPY agents ./agents
-COPY migrations ./migrations
 
 RUN useradd --create-home --uid 10001 app \
     && chown -R app:app /app
