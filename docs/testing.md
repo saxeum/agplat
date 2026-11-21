@@ -26,7 +26,8 @@ A `TestClient` test is an integration-ish test, but it is in-process. It stays o
 
 ### Host (`make check`, `make test-all`)
 
-- pytest with `TestModel`: registry, API contract, dependency injection, CLI.
+- pytest with `TestModel`: registry, API contract, dependency injection, CLI, and both run routes
+  against a `FakeRunStore`.
 - ruff and basedpyright.
 - Coverage with a 95% floor (`make test-all`; currently 100%).
 - Fast enough to run on every edit. No model, no network, no database. Integration tests are
@@ -34,6 +35,8 @@ A `TestClient` test is an integration-ish test, but it is in-process. It stays o
 
 ### Integration (`make test-integration`)
 
+- Four tests: the database is reachable and migrated, `RunRepository` round-trips a running, an ok, a
+  failed and a child row, and both run routes persist what they return.
 - Starts the compose Postgres with `docker compose up -d --wait db`.
 - Creates `agplat_test` if it does not exist; migrations run against it.
 - Runs `pytest -m integration` on the host with `AGPLAT_TEST_DB_URL` pointing at that database.
