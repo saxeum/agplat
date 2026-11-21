@@ -12,8 +12,13 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic_ai import PartDeltaEvent, TextPartDelta
+from pydantic_ai.models.test import TestModel
 
-from agplat.api.agents import _record_failure, _stream_run
+from agplat.agents.registry import AgentRegistry
+from agplat.api.agents import _limits, _record_failure, _stream_run
+from agplat.main import create_app
+from agplat.settings import Settings
+from tests.conftest import AGENTS_DIR, tool_calling_agent
 from tests.fakes import FakeRunStore
 
 
@@ -106,6 +111,35 @@ def test_stream_failure_emits_run_failed(client: TestClient, runs: FakeRunStore)
     assert runs.failed[0]["run_id"] == failed["run_id"]
 
 
+def test_stream_honours_the_request_limit(
+    monkeypatch, runs: FakeRunStore
+) -> None:
+    monkeypatch.setenv("AGPLAT_REQUEST_LIMIT", "1")
+    registry = AgentRegistry.load(AGENTS_DIR, model=TestModel())
+    app = create_app(settings=Settings(), registry=registry, runs=runs)
+    app.state.registry.agents["assistant"] = replace(
+        registry.get("assistant"),
+        agent=tool_calling_agent(),
+    )
+
+    with TestClient(app) as client, client.stream(
+        "POST",
+        "/agents/assistant/runs/stream",
+        json={"input": "go"},
+    ) as response:
+        body = "".join(response.iter_text())
+
+    events = parse_sse(body)
+    names = [name for name, _ in events]
+    assert names[0] == "run.started"
+    assert names[-1] == "run.failed"
+    assert "run.completed" not in names
+
+    failed = dict(events)["run.failed"]
+    assert "request_limit of 1" in failed["detail"]
+    assert runs.failed[0]["error"] == failed["detail"]
+
+
 def test_stream_unknown_agent_is_404(client: TestClient) -> None:
     response = client.post("/agents/nope/runs/stream", json={"input": "hi"})
 
@@ -135,7 +169,7 @@ def test_disconnect_marks_the_run_failed() -> None:
             prompt="hi",
             run_id=run_id,
             runs=store,
-            max_tool_calls=12,
+            limits=_limits(Settings()),
         )
         assert (await stream.__anext__()).startswith("event: run.started")
         assert (await stream.__anext__()).startswith("event: output.delta")
@@ -165,7 +199,7 @@ def test_stream_without_a_result_fails_cleanly() -> None:
             prompt="hi",
             run_id=run_id,
             runs=store,
-            max_tool_calls=12,
+            limits=_limits(Settings()),
         )
         chunks = [chunk async for chunk in stream]
 

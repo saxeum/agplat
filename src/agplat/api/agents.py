@@ -66,6 +66,14 @@ def _usage(usage: RunUsage) -> Usage:
     )
 
 
+def _limits(settings: Settings) -> UsageLimits:
+    """Both ceilings come from settings, so a test or a deployment can tighten them."""
+    return UsageLimits(
+        request_limit=settings.request_limit,
+        tool_calls_limit=settings.max_tool_calls,
+    )
+
+
 def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
@@ -131,10 +139,7 @@ async def run_agent(name: str, body: RunRequest, request: Request) -> RunRespons
         result = await loaded.agent.run(
             body.input,
             deps=RunDeps(run_id=run_id, agent=name),
-            usage_limits=UsageLimits(
-                request_limit=4,
-                tool_calls_limit=_settings(request).max_tool_calls,
-            ),
+            usage_limits=_limits(_settings(request)),
         )
     except Exception as exc:
         latency_ms = int((time.perf_counter() - started) * 1000)
@@ -172,7 +177,7 @@ async def _stream_run(
     prompt: str,
     run_id: str,
     runs: RunStore,
-    max_tool_calls: int,
+    limits: UsageLimits,
 ) -> AsyncGenerator[str, None]:
     yield _sse("run.started", {"run_id": run_id, "agent": name})
     started = time.perf_counter()
@@ -182,10 +187,7 @@ async def _stream_run(
         async with loaded.agent.run_stream_events(
             prompt,
             deps=RunDeps(run_id=run_id, agent=name),
-            usage_limits=UsageLimits(
-                request_limit=4,
-                tool_calls_limit=max_tool_calls,
-            ),
+            usage_limits=limits,
         ) as events:
             async for event in events:
                 if isinstance(event, AgentRunResultEvent):
@@ -263,7 +265,7 @@ async def stream_agent(name: str, body: RunRequest, request: Request) -> Streami
             prompt=body.input,
             run_id=run_id,
             runs=runs,
-            max_tool_calls=_settings(request).max_tool_calls,
+            limits=_limits(_settings(request)),
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},

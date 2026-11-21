@@ -5,7 +5,12 @@ from typing import Any, cast
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic_ai.models.test import TestModel
 
+from agplat.agents.registry import AgentRegistry
+from agplat.main import create_app
+from agplat.settings import Settings
+from tests.conftest import AGENTS_DIR, tool_calling_agent
 from tests.fakes import FakeRunStore
 
 
@@ -98,6 +103,33 @@ def test_a_failed_run_is_recorded(client: TestClient, runs: FakeRunStore) -> Non
     assert runs.failed[0]["error"] == "boom"
     assert isinstance(runs.failed[0]["latency_ms"], int)
     assert runs.ok == []
+
+
+def test_request_limit_defaults_to_four(monkeypatch) -> None:
+    monkeypatch.delenv("AGPLAT_REQUEST_LIMIT", raising=False)
+
+    assert Settings().request_limit == 4
+
+
+def test_request_limit_comes_from_the_environment(
+    monkeypatch, runs: FakeRunStore
+) -> None:
+    monkeypatch.setenv("AGPLAT_REQUEST_LIMIT", "1")
+    registry = AgentRegistry.load(AGENTS_DIR, model=TestModel())
+    app = create_app(settings=Settings(), registry=registry, runs=runs)
+    app.state.registry.agents["assistant"] = replace(
+        registry.get("assistant"),
+        agent=tool_calling_agent(),
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/agents/assistant/runs", json={"input": "go"})
+
+    assert response.status_code == 500
+    body = response.json()
+    assert body["code"] == "run_failed"
+    assert "request_limit of 1" in body["detail"]
+    assert runs.failed[0]["error"] == body["detail"]
 
 
 def test_empty_input_is_rejected(client: TestClient) -> None:
